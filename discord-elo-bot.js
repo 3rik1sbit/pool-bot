@@ -70,6 +70,79 @@ async function getPlayer(playerId) {
   }
 }
 
+// Undo last match
+async function undoLastMatch(message) {
+  try {
+    // Get matches
+    const matches = await db.getData('/matches');
+    
+    // Check if there are any matches
+    if (!matches || matches.length === 0) {
+      return message.reply('No matches found to undo.');
+    }
+    
+    // Get the last match
+    const lastMatch = matches.pop();
+    
+    // Get winner and loser data
+    const winner = await getPlayer(lastMatch.winnerId);
+    const loser = await getPlayer(lastMatch.loserId);
+    
+    if (!winner || !loser) {
+      return message.reply('Could not find players from the last match.');
+    }
+    
+    // Save original data for the message
+    const winnerName = winner.name;
+    const loserName = loser.name;
+    const winnerElo = winner.elo;
+    const loserElo = loser.elo;
+    const winnerGain = lastMatch.winnerGain;
+    const loserLoss = lastMatch.loserLoss;
+    
+    // Revert ELO changes
+    winner.elo = winnerElo - winnerGain;
+    loser.elo = loserElo + loserLoss;
+    
+    // Revert win/loss count
+    winner.wins--;
+    loser.losses--;
+    
+    // Remove the match from player history
+    winner.matches = winner.matches.filter(match => 
+      match.timestamp !== lastMatch.timestamp || match.opponent !== lastMatch.loserId
+    );
+    
+    loser.matches = loser.matches.filter(match => 
+      match.timestamp !== lastMatch.timestamp || match.opponent !== lastMatch.winnerId
+    );
+    
+    // Update players in the database
+    await db.push(`/players/${winner.id}`, winner);
+    await db.push(`/players/${loser.id}`, loser);
+    
+    // Update matches in the database
+    await db.push('/matches', matches);
+    
+    // Send confirmation
+    const embed = new EmbedBuilder()
+      .setTitle('Match Reverted')
+      .setColor('#FF3300')
+      .setDescription(`The last match has been reverted.`)
+      .addFields(
+        { name: 'Reverted Match', value: `${winnerName} vs ${loserName}`, inline: false },
+        { name: `${winnerName}`, value: `${winnerElo} → ${winner.elo} (-${winnerGain} ELO)`, inline: true },
+        { name: `${loserName}`, value: `${loserElo} → ${loser.elo} (+${loserLoss} ELO)`, inline: true }
+      )
+      .setFooter({ text: 'Office Pool ELO System' });
+    
+    message.reply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error undoing last match:', error);
+    message.reply('Error undoing last match.');
+  }
+}
+
 // Process commands
 client.on('messageCreate', async message => {
   // Ignore messages from bots
@@ -88,6 +161,9 @@ client.on('messageCreate', async message => {
         break;
       case 'match':
         await recordMatch(message, args);
+        break;
+      case 'undo':
+        await undoLastMatch(message);
         break;
       case 'rankings':
         await showRankings(message);
@@ -317,6 +393,7 @@ async function showHelp(message) {
     .addFields(
       { name: '!pool register [name]', value: 'Register yourself as a player', inline: false },
       { name: '!pool match @opponent', value: 'Record that you won a match against the mentioned player', inline: false },
+      { name: '!pool undo', value: 'Revert the last recorded match (in case of mistakes)', inline: false },
       { name: '!pool rankings', value: 'Show the current player rankings', inline: false },
       { name: '!pool stats', value: 'Show your stats or the stats of a mentioned player', inline: false },
       { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket with mentioned players or all players if none mentioned', inline: false },
