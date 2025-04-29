@@ -1,0 +1,17 @@
+{
+  "name": "pool-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "discord-elo-bot.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.19.2",
+    "dotenv": "^16.5.0",
+    "node-json-db": "^2.3.1"
+  }
+}
