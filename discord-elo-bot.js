@@ -95,6 +95,9 @@ client.on('messageCreate', async message => {
       case 'stats':
         await showPlayerStats(message, args);
         break;
+      case 'tournament':
+        await generateTournament(message, args);
+        break;
       case 'help':
         await showHelp(message);
         break;
@@ -316,11 +319,206 @@ async function showHelp(message) {
       { name: '!pool match @opponent', value: 'Record that you won a match against the mentioned player', inline: false },
       { name: '!pool rankings', value: 'Show the current player rankings', inline: false },
       { name: '!pool stats', value: 'Show your stats or the stats of a mentioned player', inline: false },
+      { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket with mentioned players or all players if none mentioned', inline: false },
       { name: '!pool help', value: 'Show this help message', inline: false }
     )
     .setFooter({ text: 'Office Pool ELO System' });
   
   message.reply({ embeds: [embed] });
+}
+
+// Generate tournament bracket
+async function generateTournament(message, args) {
+  try {
+    // Helper function to get next power of 2
+    function nextPowerOf2(n) {
+      let power = 1;
+      while (power < n) {
+        power *= 2;
+      }
+      return power;
+    }
+    
+    // Helper function to shuffle array (Fisher-Yates algorithm)
+    function shuffleArray(array) {
+      const newArray = [...array];
+      for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+      }
+      return newArray;
+    }
+    
+    let playerList = [];
+    
+    // If player mentions are provided, use them
+    if (message.mentions.users.size > 0) {
+      for (const [id, user] of message.mentions.users) {
+        const player = await getPlayer(id);
+        if (player) {
+          playerList.push(player);
+        }
+      }
+      
+      if (playerList.length < 2) {
+        return message.reply('Please mention at least 2 registered players for the tournament.');
+      }
+    } else {
+      // Otherwise use all registered players
+      try {
+        const players = await db.getData('/players');
+        playerList = Object.values(players);
+        
+        if (playerList.length < 2) {
+          return message.reply('Need at least 2 registered players for a tournament. Currently there are not enough players registered.');
+        }
+      } catch (error) {
+        console.error('Error loading players:', error);
+        return message.reply('Error loading player data. Please make sure there are registered players.');
+      }
+    }
+    
+    // Shuffle the players randomly
+    playerList = shuffleArray(playerList);
+    
+    // Determine bracket size (next power of 2)
+    const bracketSize = nextPowerOf2(playerList.length);
+    
+    // Create matchups
+    const matches = [];
+    let remainingPlayers = [...playerList];
+    
+    // If we don't have a perfect power of 2, some players get byes
+    const byeCount = bracketSize - playerList.length;
+    
+    // First round with byes
+    for (let i = 0; i < bracketSize / 2; i++) {
+      if (i < byeCount) {
+        // This match is a bye - player advances automatically
+        if (remainingPlayers.length > 0) {
+          matches.push({
+            player1: remainingPlayers.shift(),
+            player2: null,
+            breaker: Math.random() < 0.5 ? 'player1' : 'player2'
+          });
+        }
+      } else {
+        // Regular match between two players
+        if (remainingPlayers.length >= 2) {
+          matches.push({
+            player1: remainingPlayers.shift(),
+            player2: remainingPlayers.shift(),
+            breaker: Math.random() < 0.5 ? 'player1' : 'player2'
+          });
+        }
+      }
+    }
+    
+    // Generate a Swedish tournament name
+    const tournamentName = generateSwedishPoolTournamentName();
+    
+    // Create the tournament bracket embed
+    const embed = new EmbedBuilder()
+      .setTitle(`🏆 ${tournamentName} 🏆`)
+      .setColor('#FF9900')
+      .setDescription(`Tournament with ${playerList.length} players\n${byeCount > 0 ? `(${byeCount} players receive first-round byes)` : ''}`)
+      .setFooter({ text: 'Office Pool Tournament | Randomly generated matchups' });
+    
+    // Add field for each match
+    matches.forEach((match, index) => {
+      if (match.player2) {
+        // Regular match
+        const breakerName = match.breaker === 'player1' ? match.player1.name : match.player2.name;
+        embed.addFields({
+          name: `Match ${index + 1}`,
+          value: `**${match.player1.name}** (${match.player1.elo} ELO) vs **${match.player2.name}** (${match.player2.elo} ELO)\n*${breakerName} breaks first*`,
+          inline: false
+        });
+      } else {
+        // Bye match
+        embed.addFields({
+          name: `Match ${index + 1}`,
+          value: `**${match.player1.name}** (${match.player1.elo} ELO) - *Bye to next round*`,
+          inline: false
+        });
+      }
+    });
+    
+    message.reply({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error generating tournament:', error);
+    message.reply(`Error generating tournament bracket: ${error.message}`);
+  }
+}
+
+// Helper function to shuffle array (Fisher-Yates algorithm)
+function shuffleArray(array) {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+}
+
+// Generate a punny Swedish pool tournament name
+function generateSwedishPoolTournamentName() {
+  const prefixes = [
+    "Biljard", "Pool", "Kö", "Kritmagi", "Boll", "Klot", "Spel", "Hål", "Prick", 
+    "Rackare", "Klack", "Kant", "Stöt", "Krita", "Triangel", "Grön", "Snooker"
+  ];
+  
+  const suffixes = [
+    "mästerskapet", "turneringen", "kampen", "utmaningen", "duellen", "spelandet",
+    "striden", "fajten", "tävlingen", "bataljen", "kalaset", "festen", "smällen",
+    "stöten", "bragden", "träffen", "mötet", "drabbningen", "uppgörelsen"
+  ];
+  
+  const adjectives = [
+    "Kungliga", "Magnifika", "Legendariska", "Otroliga", "Galna", "Vilda", "Episka",
+    "Fantastiska", "Häftiga", "Glada", "Mäktiga", "Snabba", "Precisa", "Strategiska",
+    "Oförglömliga", "Prestigefyllda", "Heta", "Svettiga", "Spännande", "Årliga"
+  ];
+  
+  const puns = [
+    "Kö-los Före Resten", "Boll-i-gare Än Andra", "Stöt-ande Bra Spel",
+    "Hål-i-ett Sällskap", "Krit-iskt Bra", "Rack-a Ner På Motståndaren",
+    "Klot-rent Mästerskap", "Kant-astiskt Spel", "Prick-säkra Spelare",
+    "Tri-angel-utmaningen", "Kö-a För Segern", "Boll-virtuoserna",
+    "Grön-saksodlare På Bordet", "Snooker-sväng Med Stil",
+    "Stöt-i-rätt-hålet", "Klack-sparkarnas Kamp", "Krit-a På Näsan"
+  ];
+  
+  const locations = [
+    "i Stockholm", "på Vasa", "i Göteborg", "i Uppsala", "på Östermalm",
+    "i Gamla Stan", "på Söder", "i Malmö", "i Norrland", "vid Vättern",
+    "i Kontoret", "på Jobbet", "i Fikarummet", "vid Kaffeautomaten"
+  ];
+  
+  // Different name generation styles
+  const nameStyles = [
+    // Standard format: "Det [Adjective] [Prefix][Suffix]"
+    () => `Det ${randomChoice(adjectives)} ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
+    
+    // Location format: "[Prefix][Suffix] [location]"
+    () => `${randomChoice(prefixes)}${randomChoice(suffixes)} ${randomChoice(locations)}`,
+    
+    // Punny format: "[Punny phrase]"
+    () => `${randomChoice(puns)}`,
+    
+    // Year format: "[Year] års [Prefix][Suffix]"
+    () => `${new Date().getFullYear()} års ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
+    
+    // Compound format: "[Prefix]-[Prefix] [Suffix]"
+    () => `${randomChoice(prefixes)}-${randomChoice(prefixes)} ${randomChoice(suffixes)}`
+  ];
+  
+  return randomChoice(nameStyles)();
+}
+
+// Helper function to choose random element from array
+function randomChoice(array) {
+  return array[Math.floor(Math.random() * array.length)];
 }
 
 // When the client is ready, run this code (only once)
