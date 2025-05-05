@@ -415,7 +415,7 @@ async function generateTournament(message, args) {
       }
       return power;
     }
-    
+
     // Helper function to shuffle array (Fisher-Yates algorithm)
     function shuffleArray(array) {
       const newArray = [...array];
@@ -425,177 +425,263 @@ async function generateTournament(message, args) {
       }
       return newArray;
     }
-    
+
     let playerList = [];
-    
+
     // If player mentions are provided, use them
     if (message.mentions.users.size > 0) {
       for (const [id, user] of message.mentions.users) {
-        const player = await getPlayer(id);
+        // Mock getPlayer for testing if necessary
+        // const player = { id: id, name: user.username, elo: Math.floor(Math.random() * 300) + 800 };
+        const player = await getPlayer(id); // Use your actual getPlayer function
         if (player) {
           playerList.push(player);
+        } else {
+          // Optional: Notify if a mentioned user isn't a registered player
+          // message.channel.send(`${user.username} is not a registered player.`);
         }
       }
-      
+
       if (playerList.length < 2) {
         return message.reply('Please mention at least 2 registered players for the tournament.');
       }
     } else {
       // Otherwise use all registered players
       try {
-        const players = await db.getData('/players');
+        // Mock db.getData for testing if necessary
+        /*
+        const players = {
+          '1': { id: '1', name: 'Alice', elo: 1000 },
+          '2': { id: '2', name: 'Bob', elo: 950 },
+          '3': { id: '3', name: 'Charlie', elo: 1050 },
+          '4': { id: '4', name: 'David', elo: 900 }
+        };
+        */
+        const players = await db.getData('/players'); // Use your actual db access
         playerList = Object.values(players);
-        
+
         if (playerList.length < 2) {
           return message.reply('Need at least 2 registered players for a tournament. Currently there are not enough players registered.');
         }
       } catch (error) {
+        // Handle case where '/players' might not exist yet
+        if (error.constructor.name === 'DataError') {
+          return message.reply('No players registered yet. Use the register command!');
+        }
         console.error('Error loading players:', error);
         return message.reply('Error loading player data. Please make sure there are registered players.');
       }
     }
-    
+
     // Shuffle the players randomly
     playerList = shuffleArray(playerList);
-    
+
     // Determine bracket size (next power of 2)
-    const bracketSize = nextPowerOf2(playerList.length);
-    
-    // Create matchups
-    const matches = [];
+    const initialPlayerCount = playerList.length;
+    const bracketSize = nextPowerOf2(initialPlayerCount);
+
+    // Create matchups for the first round
+    const round1Matches = [];
     let remainingPlayers = [...playerList];
-    
+
     // If we don't have a perfect power of 2, some players get byes
-    const byeCount = bracketSize - playerList.length;
-    
-    // First round with byes
+    const byeCount = bracketSize - initialPlayerCount;
+
+    // Generate first round matches (indices 1 to bracketSize/2)
     for (let i = 0; i < bracketSize / 2; i++) {
+      const matchIndex = i + 1; // Match numbers start from 1
       if (i < byeCount) {
         // This match is a bye - player advances automatically
         if (remainingPlayers.length > 0) {
-          matches.push({
+          round1Matches.push({
+            matchNumber: matchIndex,
             player1: remainingPlayers.shift(),
-            player2: null,
-            breaker: Math.random() < 0.5 ? 'player1' : 'player2'
+            player2: null, // Indicates a bye
+            breaker: 'player1' // Breaker doesn't matter for a bye, but assign for consistency
           });
+        } else {
+          // This case should ideally not happen with correct byeCount logic
+          console.error("Error creating bye match: No remaining players.");
         }
       } else {
         // Regular match between two players
         if (remainingPlayers.length >= 2) {
-          matches.push({
+          round1Matches.push({
+            matchNumber: matchIndex,
             player1: remainingPlayers.shift(),
             player2: remainingPlayers.shift(),
+            // Randomly assign who breaks first
             breaker: Math.random() < 0.5 ? 'player1' : 'player2'
           });
+        } else {
+          // This case should ideally not happen if logic is correct
+          console.error("Error creating regular match: Not enough remaining players.");
         }
       }
     }
-    
-    // Generate a Swedish tournament name
-    const tournamentName = generateSwedishPoolTournamentName();
-    
+
+    // Generate a Swedish tournament name (assuming this function is defined as per previous request)
+    const tournamentName = generateSwedishPoolTournamentName().toUpperCase(); // Using the uppercase version
+
     // Create the tournament bracket embed
     const embed = new EmbedBuilder()
-      .setTitle(`🏆 ${tournamentName} 🏆`)
-      .setColor('#FF9900')
-      .setDescription(`Tournament with ${playerList.length} players\n${byeCount > 0 ? `(${byeCount} players receive first-round byes)` : ''}`)
-      .setFooter({ text: 'Office Pool Tournament | Randomly generated matchups' });
-    
-    // Add field for each match
-    matches.forEach((match, index) => {
+        .setTitle(`🏆 ${tournamentName} 🏆`)
+        .setColor('#FF9900')
+        .setDescription(`Tournament with ${initialPlayerCount} players.\nBracket Size: ${bracketSize}. ${byeCount > 0 ? `(${byeCount} players receive first-round byes)` : ''}`)
+        .setFooter({ text: 'Office Pool Tournament | Göteborg Edition' }); // Adjusted footer text
+
+    // --- Add field for each FIRST ROUND match ---
+    embed.addFields({ name: '--- Round 1 ---', value: '\u200B' }); // Separator for clarity
+    round1Matches.forEach((match) => {
       if (match.player2) {
         // Regular match
         const breakerName = match.breaker === 'player1' ? match.player1.name : match.player2.name;
         embed.addFields({
-          name: `Match ${index + 1}`,
+          name: `Match ${match.matchNumber}`,
           value: `**${match.player1.name}** (${match.player1.elo} ELO) vs **${match.player2.name}** (${match.player2.elo} ELO)\n*${breakerName} breaks first*`,
           inline: false
         });
-      } else {
+      } else if (match.player1) {
         // Bye match
         embed.addFields({
-          name: `Match ${index + 1}`,
+          name: `Match ${match.matchNumber}`,
           value: `**${match.player1.name}** (${match.player1.elo} ELO) - *Bye to next round*`,
           inline: false
         });
       }
+      // Handle potential errors where a match object might be malformed (optional)
+      else {
+        console.error(`Malformed match object encountered: ${JSON.stringify(match)}`);
+        embed.addFields({ name: `Match ${match.matchNumber || 'N/A'}`, value: 'Error generating match details.', inline: false });
+      }
     });
-    
+
+    // --- Calculate and Add Subsequent Match Break Info ---
+    const subsequentBreaksInfo = [];
+    let currentMatchNumber = round1Matches.length; // Start numbering after round 1 matches
+    let matchesInPreviousRound = round1Matches.length; // Number of matches feeding into the next round
+    let roundCounter = 2;
+
+    // Loop through subsequent rounds until only the final match remains
+    while (matchesInPreviousRound > 1) {
+      const matchesInCurrentRound = matchesInPreviousRound / 2;
+      const roundTitle = `--- Round ${roundCounter} ${matchesInCurrentRound === 1 ? '(Final)' : matchesInCurrentRound === 2 ? '(Semi-Finals)' : ''} ---`;
+      subsequentBreaksInfo.push(`\n**${roundTitle}**`); // Add round title
+
+      for (let i = 0; i < matchesInCurrentRound; i++) {
+        currentMatchNumber++;
+        // Calculate the match numbers from the previous round that feed into this one
+        // The indices are offset by the total matches before the previous round started.
+        const prevRoundStartMatchNumber = currentMatchNumber - matchesInCurrentRound - matchesInPreviousRound;
+        const prereqMatch1Index = prevRoundStartMatchNumber + (2 * i) + 1;
+        const prereqMatch2Index = prevRoundStartMatchNumber + (2 * i) + 2;
+
+        // Determine the breaker based on the lower prerequisite match index
+        const breakerMatchIndex = prereqMatch1Index; // Winner of the first listed prerequisite match breaks
+
+        const matchDescription = `Match ${currentMatchNumber}: Winner M${prereqMatch1Index} vs Winner M${prereqMatch2Index}\n*Winner of Match ${breakerMatchIndex} breaks first*`;
+        subsequentBreaksInfo.push(matchDescription);
+      }
+
+      matchesInPreviousRound = matchesInCurrentRound; // Update for the next loop iteration
+      roundCounter++;
+    }
+
+    // Add the subsequent break info as a single field if there are subsequent matches
+    if (subsequentBreaksInfo.length > 0) {
+      // Join the array into a single string, respecting Discord's field value limit (1024 chars)
+      let subsequentBreaksValue = subsequentBreaksInfo.join('\n');
+      if (subsequentBreaksValue.length > 1024) {
+        subsequentBreaksValue = subsequentBreaksValue.substring(0, 1021) + '...'; // Truncate if too long
+      }
+      embed.addFields({
+        name: 'Subsequent Rounds & Breaks',
+        value: subsequentBreaksValue,
+        inline: false
+      });
+    }
+    // --- End of Subsequent Match Info ---
+
+    // Send the embed
     message.reply({ embeds: [embed] });
+
   } catch (error) {
     console.error('Error generating tournament:', error);
-    message.reply(`Error generating tournament bracket: ${error.message}`);
+    message.reply(`An error occurred while generating the tournament bracket: ${error.message}`);
   }
 }
 
-// Helper function to shuffle array (Fisher-Yates algorithm)
-function shuffleArray(array) {
-  const newArray = [...array];
-  for (let i = newArray.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+// Helper function to pick a random element from an array
+function randomChoice(arr) {
+  if (!arr || arr.length === 0) {
+    return ""; // Return empty string if array is empty or undefined
   }
-  return newArray;
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// Generate a punny Swedish pool tournament name
+// Generate an *UPPERCASE* punny Swedish pool tournament name focused on West Coast / Workplace
 function generateSwedishPoolTournamentName() {
   const prefixes = [
-    "Biljard", "Pool", "Kö", "Kritmagi", "Boll", "Klot", "Spel", "Hål", "Prick", 
-    "Rackare", "Klack", "Kant", "Stöt", "Krita", "Triangel", "Grön", "Snooker"
+    "Biljard", "Pool", "Kö", "Kritmagi", "Boll", "Klot", "Spel", "Hål", "Prick",
+    "Rackare", "Klack", "Kant", "Stöt", "Krita", "Triangel", "Grön", "Snooker",
+    "Vall", "Ficka", "Sänk", "Effekt", "Massé", "Vit", "Svart"
   ];
-  
+
   const suffixes = [
     "mästerskapet", "turneringen", "kampen", "utmaningen", "duellen", "spelandet",
     "striden", "fajten", "tävlingen", "bataljen", "kalaset", "festen", "smällen",
-    "stöten", "bragden", "träffen", "mötet", "drabbningen", "uppgörelsen"
+    "stöten", "bragden", "träffen", "mötet", "drabbningen", "uppgörelsen",
+    "ligan", "cupen", "serien", "racet", "jippot", "spektaklet", "finalen", "derbyt"
   ];
-  
+
   const adjectives = [
     "Kungliga", "Magnifika", "Legendariska", "Otroliga", "Galna", "Vilda", "Episka",
     "Fantastiska", "Häftiga", "Glada", "Mäktiga", "Snabba", "Precisa", "Strategiska",
-    "Oförglömliga", "Prestigefyllda", "Heta", "Svettiga", "Spännande", "Årliga"
+    "Oförglömliga", "Prestigefyllda", "Heta", "Svettiga", "Spännande", "Årliga",
+    "Knivskarpa", "Ostoppbara", "Fruktade", "Ökända", "Hemliga", "Officiella",
+    "Inofficiella", "Kollegiala", "Obarmhärtiga", "Avgörande"
   ];
-  
+
   const puns = [
     "Kö-los Före Resten", "Boll-i-gare Än Andra", "Stöt-ande Bra Spel",
     "Hål-i-ett Sällskap", "Krit-iskt Bra", "Rack-a Ner På Motståndaren",
     "Klot-rent Mästerskap", "Kant-astiskt Spel", "Prick-säkra Spelare",
     "Tri-angel-utmaningen", "Kö-a För Segern", "Boll-virtuoserna",
     "Grön-saksodlare På Bordet", "Snooker-sväng Med Stil",
-    "Stöt-i-rätt-hålet", "Klack-sparkarnas Kamp", "Krit-a På Näsan"
+    "Stöt-i-rätt-hålet", "Klack-sparkarnas Kamp", "Krit-a På Näsan",
+    "Rena Sänk-ningen", "Rack-a-rökare", "Helt Vall-galet",
+    "Fick-lampornas Kamp", "Effekt-sökarna", "Värsta Vit-ingarna",
+    "Svart-listade Spelare", "Triangel-dramat", "Krit-erianerna",
+    "Boll-änska Ligan", "Måndags-Massé", "Fredags-Fajten", "Team-Stöten",
+    "Projekt Pool", "Excel-lent Spel", "Kod & Klot", "Kaffe & Krita",
+    "Fika & Fickor", "Vall-öften", "Stöt-tålig Personal",
+    "Inga Sura Miner, Bara Sura Stötar"
   ];
-  
-  const locations = [
-    "i Stockholm", "på Vasa", "i Göteborg", "i Uppsala", "på Östermalm",
-    "i Gamla Stan", "på Söder", "i Malmö", "i Norrland", "vid Vättern",
-    "i Kontoret", "på Jobbet", "i Fikarummet", "vid Kaffeautomaten"
-  ];
-  
-  // Different name generation styles
-  const nameStyles = [
-    // Standard format: "Det [Adjective] [Prefix][Suffix]"
-    () => `Det ${randomChoice(adjectives)} ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
-    
-    // Location format: "[Prefix][Suffix] [location]"
-    () => `${randomChoice(prefixes)}${randomChoice(suffixes)} ${randomChoice(locations)}`,
-    
-    // Punny format: "[Punny phrase]"
-    () => `${randomChoice(puns)}`,
-    
-    // Year format: "[Year] års [Prefix][Suffix]"
-    () => `${new Date().getFullYear()} års ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
-    
-    // Compound format: "[Prefix]-[Prefix] [Suffix]"
-    () => `${randomChoice(prefixes)}-${randomChoice(prefixes)} ${randomChoice(suffixes)}`
-  ];
-  
-  return randomChoice(nameStyles)();
-}
 
-// Helper function to choose random element from array
-function randomChoice(array) {
-  return array[Math.floor(Math.random() * array.length)];
+  const locations = [
+    "i Kungsbacka", "från Kungsbackaskogarna", "vid Kungsbackaån",
+    "på Kungsbacka Torg", "i Göteborg", "på Hisingen", "vid Älvsborgsbron",
+    "i Majorna", "i Götet", "på Västkusten", "i Halland", "vid Tjolöholm",
+    "i Onsala", "i Fjärås", "i Anneberg", "runt Liseberg", "vid Feskekörka",
+    "i Kontoret", "på Jobbet", "i Fikarummet", "vid Kaffeautomaten",
+    "i Mötesrummet", "vid Skrivaren", "på Lagret", "i Källaren"
+  ];
+
+  const nameStyles = [
+    () => `Det ${randomChoice(adjectives)} ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
+    () => `${randomChoice(prefixes)}${randomChoice(suffixes)} ${randomChoice(locations)}`,
+    () => `${randomChoice(puns)}`,
+    () => `${new Date().getFullYear()} års ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
+    () => `${randomChoice(prefixes)}-${randomChoice(prefixes)} ${randomChoice(suffixes)}`,
+    () => `Den ${randomChoice(adjectives)} ${randomChoice(puns)}`,
+    () => `${randomChoice(puns)} ${randomChoice(locations)}`
+  ];
+
+  // Generate the name using a random style
+  const generatedName = randomChoice(nameStyles)();
+
+  // *** Convert the entire name to uppercase before returning ***
+  return generatedName.toUpperCase();
 }
 
 // When the client is ready, run this code (only once)
