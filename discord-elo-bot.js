@@ -561,6 +561,7 @@ async function generateTournament(message, args) {
     let currentMatchNumber = round1Matches.length; // Start numbering after round 1 matches
     let matchesInPreviousRound = round1Matches.length; // Number of matches feeding into the next round
     let roundCounter = 2;
+    let prereqRoundStartMatchNumber = 1;
 
     // Loop through subsequent rounds until only the final match remains
     while (matchesInPreviousRound > 1) {
@@ -572,11 +573,11 @@ async function generateTournament(message, args) {
         currentMatchNumber++;
         // Calculate the match numbers from the previous round that feed into this one
         // The indices are offset by the total matches before the previous round started.
-        const prevRoundStartMatchNumber = currentMatchNumber - matchesInCurrentRound - matchesInPreviousRound;
-        const prereqMatch1Index = prevRoundStartMatchNumber + (2 * i) + 1;
-        const prereqMatch2Index = prevRoundStartMatchNumber + (2 * i) + 2;
 
-        // Determine the breaker based on the lower prerequisite match index
+	const prereqMatch1Index = prereqRoundStartMatchNumber + (2 * i);
+        const prereqMatch2Index = prereqRoundStartMatchNumber + (2 * i) + 1;
+        
+	// Determine the breaker based on the lower prerequisite match index
         const breakerMatchIndex = prereqMatch1Index; // Winner of the first listed prerequisite match breaks
 
         const matchDescription = `Match ${currentMatchNumber}: Winner M${prereqMatch1Index} vs Winner M${prereqMatch2Index}\n*Winner of Match ${breakerMatchIndex} breaks first*`;
