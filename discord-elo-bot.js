@@ -584,6 +584,9 @@ async function generateTournament(message, args) {
         subsequentBreaksInfo.push(matchDescription);
       }
 
+      // Update prereqRoundStartMatchNumber for the NEXT iteration of the while loop.
+      // The round we just processed will be the "previous round" for the next one.
+      prereqRoundStartMatchNumber = currentMatchNumber - matchesInCurrentRound + 1;    
       matchesInPreviousRound = matchesInCurrentRound; // Update for the next loop iteration
       roundCounter++;
     }
