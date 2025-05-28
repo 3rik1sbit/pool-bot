@@ -270,6 +270,7 @@ async function recordMatch(message, args) {
   });
   
   // Save match in the matches collection
+  const matchTimestamp = new Date().toISOString();
   const matchData = {
     winnerId,
     loserId,
@@ -277,7 +278,8 @@ async function recordMatch(message, args) {
     loserElo: newLoserElo,
     winnerGain,
     loserLoss,
-    timestamp: new Date().toISOString()
+    timestamp: matchTimestamp,
+    matchId: matchTimestamp // Add matchId for unique reference
   };
   
   const matches = await db.getData('/matches');
@@ -301,11 +303,11 @@ async function recordMatch(message, args) {
   // Add buttons for break shot selection
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`break_${winner.id}_${loser.id}_${Date.now()}_winner`)
+      .setCustomId(`break_${winner.id}_${loser.id}_${matchTimestamp}_winner`)
       .setLabel(winner.name)
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setCustomId(`break_${winner.id}_${loser.id}_${Date.now()}_loser`)
+      .setCustomId(`break_${winner.id}_${loser.id}_${matchTimestamp}_loser`)
       .setLabel(loser.name)
       .setStyle(ButtonStyle.Secondary)
   );
@@ -718,18 +720,17 @@ client.on('interactionCreate', async interaction => {
   if (!interaction.isButton()) return;
   if (!interaction.customId.startsWith('break_')) return;
 
-  // Parse customId: break_{winnerId}_{loserId}_{timestamp}_{who}
-  const [, winnerId, loserId, , who] = interaction.customId.split('_');
+  // Parse customId: break_{winnerId}_{loserId}_{matchTimestamp}_{who}
+  const [, winnerId, loserId, matchTimestamp, who] = interaction.customId.split('_');
   let breakerId;
   if (who === 'winner') breakerId = winnerId;
   else if (who === 'loser') breakerId = loserId;
   else return;
 
-  // Find the latest match between these two players
+  // Find the match by matchId (timestamp)
   let matches = await db.getData('/matches');
-  // Find the latest match with these winner/loser (could also use timestamp if needed)
-  const match = [...matches].reverse().find(
-    m => m.winnerId === winnerId && m.loserId === loserId && !m.breakerId
+  const match = matches.find(
+    m => m.matchId === matchTimestamp
   );
   if (!match) {
     await interaction.reply({ content: 'Could not find the match to update breaker info.', ephemeral: true });
