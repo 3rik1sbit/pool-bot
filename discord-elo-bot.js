@@ -297,8 +297,24 @@ async function recordMatch(message, args) {
       { name: 'Loser', value: `${loser.name} (${newLoserElo} ELO, -${loserLoss})`, inline: false }
     )
     .setFooter({ text: 'Office Pool ELO System' });
-  
-  message.reply({ embeds: [embed] });
+
+  // Add buttons for break shot selection
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`break_${winner.id}_${loser.id}_${Date.now()}_winner`)
+      .setLabel(winner.name)
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`break_${winner.id}_${loser.id}_${Date.now()}_loser`)
+      .setLabel(loser.name)
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  message.reply({ 
+    embeds: [embed], 
+    components: [row],
+    content: '**Breaker:** Select who made the break shot.'
+  });
 }
 
 // Show current rankings
@@ -696,3 +712,37 @@ client.once('ready', async () => {
 
 // Login to Discord with your client's token
 client.login(process.env.TOKEN);
+
+// Listen for button interactions to save breaker info
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith('break_')) return;
+
+  // Parse customId: break_{winnerId}_{loserId}_{timestamp}_{who}
+  const [, winnerId, loserId, , who] = interaction.customId.split('_');
+  let breakerId;
+  if (who === 'winner') breakerId = winnerId;
+  else if (who === 'loser') breakerId = loserId;
+  else return;
+
+  // Find the latest match between these two players
+  let matches = await db.getData('/matches');
+  // Find the latest match with these winner/loser (could also use timestamp if needed)
+  const match = [...matches].reverse().find(
+    m => m.winnerId === winnerId && m.loserId === loserId && !m.breakerId
+  );
+  if (!match) {
+    await interaction.reply({ content: 'Could not find the match to update breaker info.', ephemeral: true });
+    return;
+  }
+
+  // Save breakerId to the match and update DB
+  match.breakerId = breakerId;
+  await db.push('/matches', matches);
+
+  // Optionally, update the message to show who was selected as breaker
+  await interaction.update({
+    content: `**Breaker:** ${interaction.user.username} selected **${breakerId === winnerId ? 'Winner' : 'Loser'}** (${breakerId === winnerId ? (await getPlayer(winnerId)).name : (await getPlayer(loserId)).name}) as the breaker.`,
+    components: []
+  });
+});
