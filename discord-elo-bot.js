@@ -270,6 +270,7 @@ async function recordMatch(message, args) {
   });
   
   // Save match in the matches collection
+  const matchTimestamp = new Date().toISOString();
   const matchData = {
     winnerId,
     loserId,
@@ -277,7 +278,8 @@ async function recordMatch(message, args) {
     loserElo: newLoserElo,
     winnerGain,
     loserLoss,
-    timestamp: new Date().toISOString()
+    timestamp: matchTimestamp,
+    matchId: matchTimestamp // Add matchId for unique reference
   };
   
   const matches = await db.getData('/matches');
@@ -297,8 +299,24 @@ async function recordMatch(message, args) {
       { name: 'Loser', value: `${loser.name} (${newLoserElo} ELO, -${loserLoss})`, inline: false }
     )
     .setFooter({ text: 'Office Pool ELO System' });
-  
-  message.reply({ embeds: [embed] });
+
+  // Add buttons for break shot selection
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`break_${winner.id}_${loser.id}_${matchTimestamp}_winner`)
+      .setLabel(winner.name)
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`break_${winner.id}_${loser.id}_${matchTimestamp}_loser`)
+      .setLabel(loser.name)
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  message.reply({ 
+    embeds: [embed], 
+    components: [row],
+    content: '**Breaker:** Select who made the break shot.'
+  });
 }
 
 // Show current rankings
@@ -696,3 +714,36 @@ client.once('ready', async () => {
 
 // Login to Discord with your client's token
 client.login(process.env.TOKEN);
+
+// Listen for button interactions to save breaker info
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith('break_')) return;
+
+  // Parse customId: break_{winnerId}_{loserId}_{matchTimestamp}_{who}
+  const [, winnerId, loserId, matchTimestamp, who] = interaction.customId.split('_');
+  let breakerId;
+  if (who === 'winner') breakerId = winnerId;
+  else if (who === 'loser') breakerId = loserId;
+  else return;
+
+  // Find the match by matchId (timestamp)
+  let matches = await db.getData('/matches');
+  const match = matches.find(
+    m => m.matchId === matchTimestamp
+  );
+  if (!match) {
+    await interaction.reply({ content: 'Could not find the match to update breaker info.', ephemeral: true });
+    return;
+  }
+
+  // Save breakerId to the match and update DB
+  match.breakerId = breakerId;
+  await db.push('/matches', matches);
+
+  // Optionally, update the message to show who was selected as breaker
+  await interaction.update({
+    content: `**Breaker:** ${interaction.user.username} selected **${breakerId === winnerId ? 'Winner' : 'Loser'}** (${breakerId === winnerId ? (await getPlayer(winnerId)).name : (await getPlayer(loserId)).name}) as the breaker.`,
+    components: []
+  });
+});
