@@ -647,6 +647,62 @@ async function generateTournament(message, args) {
     }
 }
 
+async function showBreakerStats(message) {
+    try {
+        await ensureCurrentSeasonDb(); // Ensure the current seasonal database is loaded
+        const seasonName = getSeasonDbPath().split('_').slice(1).join('/'); // Extracts YYYY/MM for display
+
+        let matches;
+        try {
+            matches = await currentSeasonDb.getData('/matches');
+        } catch (e) {
+            if (e instanceof DataError && e.message.includes("Can't find dataPath: /matches")) {
+                 return message.reply(`No match data found for the current season (${seasonName}). Play some matches first!`);
+            }
+            throw e; // Re-throw other errors
+        }
+
+
+        if (!matches || matches.length === 0) {
+            return message.reply(`No matches found in the current season (${seasonName}) to analyze for breaker stats.`);
+        }
+
+        let totalMatchesWithBreakerInfo = 0;
+        let breakerWins = 0;
+
+        for (const match of matches) {
+            // Check if breakerId exists and is a non-empty string
+            if (match.breakerId && typeof match.breakerId === 'string' && match.breakerId.trim() !== '') {
+                totalMatchesWithBreakerInfo++;
+                if (match.breakerId === match.winnerId) {
+                    breakerWins++;
+                }
+            }
+        }
+
+        if (totalMatchesWithBreakerInfo === 0) {
+            return message.reply(`No matches with breaker information found in the current season (${seasonName}). Make sure to select who broke after reporting a match!`);
+        }
+
+        const percentage = (breakerWins / totalMatchesWithBreakerInfo) * 100;
+
+        const embed = new EmbedBuilder()
+            .setTitle(`Breaker Win Statistics (Season: ${seasonName})`)
+            .setColor('#8A2BE2') // BlueViolet color
+            .addFields(
+                { name: 'Matches Analyzed (with breaker info)', value: `${totalMatchesWithBreakerInfo}`, inline: false },
+                { name: 'Times Breaker Won the Match', value: `${breakerWins}`, inline: false },
+                { name: 'Breaker Win Percentage', value: `${percentage.toFixed(2)}%`, inline: false }
+            )
+            .setFooter({ text: 'Office Pool ELO System' });
+
+        message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error('Error calculating breaker stats:', error);
+        message.reply('An error occurred while calculating breaker statistics. Please check the bot logs.');
+    }
+}
 
 // Show help message (add new alltimerankings command)
 async function showHelp(message) {
@@ -662,7 +718,8 @@ async function showHelp(message) {
             { name: '!pool alltimerankings', value: 'Show all-time player rankings', inline: false }, // New command
             { name: '!pool stats [@player]', value: 'Show your/mentioned player\'s seasonal stats (and all-time ELO)', inline: false },
             { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket (uses seasonal ELOs)', inline: false },
-            { name: '!pool help', value: 'Show this help message', inline: false }
+            { name: '!pool breakerstats', value: 'Show statistics on how often the breaker wins (current season)', inline: false },
+	    { name: '!pool help', value: 'Show this help message', inline: false }
         )
         .setFooter({ text: 'Office Pool ELO System' });
 
@@ -775,7 +832,7 @@ client.on('messageCreate', async message => {
             case 'rankings':
                 await showRankings(message);
                 break;
-            case 'alltimerankings': // New command
+            case 'alltimerankings': 
                 await showAllTimeRankings(message);
                 break;
             case 'stats':
@@ -784,6 +841,9 @@ client.on('messageCreate', async message => {
             case 'tournament':
                 await generateTournament(message, args);
                 break;
+	    case 'breakerstats':
+                await showBreakerStats(message);
+                break;		
             case 'help':
                 await showHelp(message);
                 break;
