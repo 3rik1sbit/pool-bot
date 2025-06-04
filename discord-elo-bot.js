@@ -657,11 +657,10 @@ async function showBreakerStats(message) {
             matches = await currentSeasonDb.getData('/matches');
         } catch (e) {
             if (e instanceof DataError && e.message.includes("Can't find dataPath: /matches")) {
-                 return message.reply(`No match data found for the current season (${seasonName}). Play some matches first!`);
+                return message.reply(`No match data found for the current season (${seasonName}). Play some matches first!`);
             }
             throw e; // Re-throw other errors
         }
-
 
         if (!matches || matches.length === 0) {
             return message.reply(`No matches found in the current season (${seasonName}) to analyze for breaker stats.`);
@@ -669,6 +668,7 @@ async function showBreakerStats(message) {
 
         let totalMatchesWithBreakerInfo = 0;
         let breakerWins = 0;
+        const playerBreakCounts = {}; // Object to store break counts per player ID
 
         for (const match of matches) {
             // Check if breakerId exists and is a non-empty string
@@ -677,6 +677,8 @@ async function showBreakerStats(message) {
                 if (match.breakerId === match.winnerId) {
                     breakerWins++;
                 }
+                // Increment break count for the player
+                playerBreakCounts[match.breakerId] = (playerBreakCounts[match.breakerId] || 0) + 1;
             }
         }
 
@@ -686,13 +688,55 @@ async function showBreakerStats(message) {
 
         const percentage = (breakerWins / totalMatchesWithBreakerInfo) * 100;
 
+        // --- Prepare Player Specific Break Counts ---
+        let playerBreakStatsText = "No individual player break counts available.";
+        if (Object.keys(playerBreakCounts).length > 0) {
+            const breakStatsArray = [];
+            for (const playerId in playerBreakCounts) {
+                const count = playerBreakCounts[playerId];
+                let playerName = `Player ID ${playerId}`; // Fallback name
+
+                // Try to get player name from seasonal DB, then all-time DB
+                const seasonalPlayer = await getPlayer(playerId, currentSeasonDb);
+                if (seasonalPlayer && seasonalPlayer.name) {
+                    playerName = seasonalPlayer.name;
+                } else {
+                    const allTimePlayerInfo = await getPlayer(playerId, allTimeDb); // allTimeDb should be accessible
+                    if (allTimePlayerInfo && allTimePlayerInfo.name) {
+                        playerName = allTimePlayerInfo.name;
+                    } else {
+                        console.warn(`Breaker Stats: Player name not found for ID ${playerId}`);
+                    }
+                }
+                breakStatsArray.push({ name: playerName, count: count });
+            }
+
+            // Sort by count descending
+            breakStatsArray.sort((a, b) => b.count - a.count);
+
+            const displayLimit = 15; // How many players to list directly
+            playerBreakStatsText = breakStatsArray
+                .slice(0, displayLimit)
+                .map(stat => `• ${stat.name}: ${stat.count} break${stat.count > 1 ? 's' : ''}`)
+                .join('\n');
+
+            if (breakStatsArray.length > displayLimit) {
+                playerBreakStatsText += `\n...and ${breakStatsArray.length - displayLimit} more player(s).`;
+            } else if (breakStatsArray.length === 0) { // Should not happen if Object.keys().length > 0
+                playerBreakStatsText = "Could not determine player break counts.";
+            }
+        }
+        // --- End Player Specific Break Counts ---
+
+
         const embed = new EmbedBuilder()
             .setTitle(`Breaker Win Statistics (Season: ${seasonName})`)
             .setColor('#8A2BE2') // BlueViolet color
             .addFields(
                 { name: 'Matches Analyzed (with breaker info)', value: `${totalMatchesWithBreakerInfo}`, inline: false },
                 { name: 'Times Breaker Won the Match', value: `${breakerWins}`, inline: false },
-                { name: 'Breaker Win Percentage', value: `${percentage.toFixed(2)}%`, inline: false }
+                { name: 'Overall Breaker Win Percentage', value: `${percentage.toFixed(2)}%`, inline: false },
+                { name: 'Player Break Counts', value: playerBreakStatsText, inline: false } // New field
             )
             .setFooter({ text: 'Office Pool ELO System' });
 
