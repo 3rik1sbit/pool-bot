@@ -647,6 +647,96 @@ async function generateTournament(message, args) {
     }
 }
 
+// Show your own detailed all-time stats
+async function showMyStats(message) {
+    try {
+        const requesterId = message.author.id;
+
+        // Fetch the player and all matches from the all-time database
+        const allPlayers = await allTimeDb.getData('/players');
+        const player = allPlayers[requesterId];
+
+        if (!player) {
+            return message.reply('You are not registered. Use `!pool register YourName` to get started.');
+        }
+
+        const allMatches = await allTimeDb.getData('/matches');
+
+        // Filter for matches involving the player
+        const playerMatches = allMatches.filter(m => m.winnerId === requesterId || m.loserId === requesterId);
+
+        if (playerMatches.length === 0) {
+            return message.reply('You have not played any matches yet.');
+        }
+
+        // Calculate Overall Win Percentage from the player object
+        const totalGames = player.wins + player.losses;
+        const overallWinPercentage = totalGames > 0 ? (player.wins / totalGames) * 100 : 0;
+
+        // Calculate head-to-head stats
+        const opponentStats = {};
+
+        for (const match of playerMatches) {
+            const opponentId = match.winnerId === requesterId ? match.loserId : match.winnerId;
+
+            // Initialize opponent stats if they don't exist
+            if (!opponentStats[opponentId]) {
+                opponentStats[opponentId] = {
+                    wins: 0,
+                    losses: 0,
+                    name: allPlayers[opponentId] ? allPlayers[opponentId].name : 'Unknown Player'
+                };
+            }
+
+            // Tally wins and losses against the opponent
+            if (match.winnerId === requesterId) {
+                opponentStats[opponentId].wins++;
+            } else {
+                opponentStats[opponentId].losses++;
+            }
+        }
+
+        // Create the description for the embed
+        let opponentStatsDescription = '';
+        const sortedOpponents = Object.entries(opponentStats).sort(([, a], [, b]) => {
+            const aTotal = a.wins + a.losses;
+            const bTotal = b.wins + b.losses;
+            return bTotal - aTotal; // Sort by most games played against
+        });
+
+        for (const [opponentId, stats] of sortedOpponents) {
+            const total = stats.wins + stats.losses;
+            const percentage = total > 0 ? (stats.wins / total) * 100 : 0;
+            opponentStatsDescription += `vs **${stats.name}**: ${stats.wins}W / ${stats.losses}L (${percentage.toFixed(0)}%)\n`;
+        }
+
+        if (!opponentStatsDescription) {
+            opponentStatsDescription = 'No matches found against any opponent.';
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`Your All-Time Stats: ${player.name}`)
+            .setColor('#1E90FF') // DodgerBlue
+            .addFields(
+                { name: 'Overall Win/Loss', value: `${player.wins}W / ${player.losses}L`, inline: true },
+                { name: 'Overall Win Rate', value: `${overallWinPercentage.toFixed(2)}%`, inline: true },
+                { name: '\u200B', value: '\u200B', inline: false }, // Spacer
+                { name: 'Head-to-Head Records', value: opponentStatsDescription, inline: false }
+            )
+            .setFooter({ text: 'Office Pool ELO System - All-Time Personal Stats' });
+
+        message.reply({ embeds: [embed] });
+
+    } catch (error) {
+        console.error("Error showing my stats:", error);
+        if (error instanceof DataError) {
+             message.reply('Could not retrieve all necessary data. Have any matches been played?');
+        } else {
+             message.reply("An error occurred while retrieving your stats.");
+        }
+    }
+}
+
 async function showBreakerStats(message) {
     try {
         await ensureCurrentSeasonDb(); // Ensure the current seasonal database is loaded
@@ -803,7 +893,8 @@ async function showHelp(message) {
             { name: '!pool rankings', value: 'Show current seasonal player rankings', inline: false },
             { name: '!pool alltimerankings', value: 'Show all-time player rankings', inline: false }, // New command
             { name: '!pool stats [@player]', value: 'Show your/mentioned player\'s seasonal stats (and all-time ELO)', inline: false },
-            { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket (uses seasonal ELOs)', inline: false },
+            { name: '!pool mystats', value: 'Shows your detailed all-time statistics against every opponent.', inline: false },
+	    { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket (uses seasonal ELOs)', inline: false },
             { name: '!pool breakerstats', value: 'Show statistics on how often the breaker wins (current season)', inline: false },
 	    { name: '!pool help', value: 'Show this help message', inline: false }
         )
@@ -924,7 +1015,10 @@ client.on('messageCreate', async message => {
             case 'stats':
                 await showPlayerStats(message, args);
                 break;
-            case 'tournament':
+            case 'mystats':
+                await showMyStats(message);
+                break;
+	    case 'tournament':
                 await generateTournament(message, args);
                 break;
 	    case 'breakerstats':
