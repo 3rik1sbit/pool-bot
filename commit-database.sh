@@ -2,7 +2,7 @@
 
 # --- Configuration ---
 # !!! IMPORTANT: SET THESE VARIABLES !!!
-GIT_REPO_PATH="/home/erikivarsson/Projects/JavaScript/pool-bot"  # Absolute path to your local Git repository
+GIT_REPO_PATH="/home/erik/Projects/Javascript/pool-bot"  # Absolute path to your local Git repository
 MAIN_DB_FILE="poolEloDatabase.json"                             # Main DB file, relative to repository root
 
 # Dynamically determine the seasonal database file name

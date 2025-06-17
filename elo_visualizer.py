@@ -152,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--json_path",
         type=str,
-        default="/home/erik/Projects/JavaScript/pool-bot/poolEloDatabase.json",
+        default="/home/erik/Projects/Javascript/pool-bot/poolEloDatabase.json",
         help="Path to the input JSON file."
     )
     parser.add_argument(

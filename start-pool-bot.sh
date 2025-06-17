@@ -15,7 +15,7 @@ export PATH="$PATH:/usr/bin:/usr/local/bin:/home/$(whoami)/.nvm/versions/node/$(
 echo "Current PATH: $PATH" >> $LOG_FILE
 
 # Navigate to the bot directory
-cd /home/erikivarsson/Projects/JavaScript/pool-bot
+cd /home/erikivarsson/Projects/Javascript/pool-bot
 
 # Make sure the log exists
 touch $LOG_FILE
