@@ -394,17 +394,22 @@ async function showRankings(message) {
         await ensureCurrentSeasonDb();
         const players = await currentSeasonDb.getData('/players');
 
-        if (Object.keys(players).length === 0) {
-            return message.reply('No players are registered in the current season yet.');
+        // Filter for players who have played at least one game (wins + losses > 0)
+        const activePlayers = Object.values(players).filter(player => (player.wins + player.losses) > 0);
+
+        if (activePlayers.length === 0) {
+            return message.reply('No players have recorded any games in the current season yet.');
         }
 
-        const rankedPlayers = Object.values(players).sort((a, b) => b.elo - a.elo);
+        // Sort the active players by their ELO in descending order
+        const rankedPlayers = activePlayers.sort((a, b) => b.elo - a.elo);
 
         const embed = new EmbedBuilder()
             .setTitle(`Office Pool Rankings (Current Season: ${getSeasonDbPath().split('_').slice(1).join('/')})`)
             .setColor('#0099FF')
             .setFooter({ text: 'Office Pool ELO System - Seasonal Rankings' });
 
+        // Display up to the top 10 active players
         rankedPlayers.slice(0, 10).forEach((player, index) => {
             embed.addFields({
                 name: `#${index + 1} ${player.name}`,
@@ -416,7 +421,11 @@ async function showRankings(message) {
         message.reply({ embeds: [embed] });
     } catch (error) {
         console.error('Error showing seasonal rankings:', error);
-        message.reply('Error retrieving seasonal rankings.');
+        if (error instanceof DataError) {
+             message.reply('No players are registered in the current season yet.');
+        } else {
+             message.reply('An error occurred while retrieving seasonal rankings.');
+        }
     }
 }
 
