@@ -5,15 +5,15 @@
 // npm install discord.js dotenv node-json-db
 
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Collection } = require('discord.js'); // Added Collection for potential future use
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Collection } = require('discord.js');
 const { JsonDB, Config } = require('node-json-db');
-const { DataError } = require('node-json-db/dist/lib/Errors'); // Import DataError for specific error handling
+const { DataError } = require('node-json-db/dist/lib/Errors');
 
 // --- Database Configuration ---
 const ALL_TIME_DB_NAME = "poolEloDatabase";
 const DEFAULT_ELO = 1000;
-const K_FACTOR = 32; // How quickly ratings change
- 
+const K_FACTOR = 32;
+
 // Create a new client instance
 const client = new Client({
   intents: [
@@ -25,13 +25,13 @@ const client = new Client({
 
 // Initialize the all-time database
 const allTimeDb = new JsonDB(new Config(ALL_TIME_DB_NAME, true, false, '/'));
-let currentSeasonDb = null; // Will hold the JsonDB instance for the current season
+let currentSeasonDb = null;
 
 // --- Helper Functions for Seasonal Database ---
 
 function getSeasonDbPath(date = new Date()) {
     const year = date.getFullYear();
-    const month = (date.getMonth() + 1).toString().padStart(2, '0'); // Ensure two digits for month
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
     return `${ALL_TIME_DB_NAME}_${year}_${month}`;
 }
 
@@ -59,12 +59,12 @@ async function ensureCurrentSeasonDb() {
     const seasonDbPath = getSeasonDbPath(currentDate);
 
     if (currentSeasonDb && currentSeasonDb.db_name === seasonDbPath) {
-        return currentSeasonDb; // Already connected to the correct season DB
+        return currentSeasonDb;
     }
 
     console.log(`Attempting to load or initialize seasonal database: ${seasonDbPath}`);
     currentSeasonDb = new JsonDB(new Config(seasonDbPath, true, false, '/'));
-    currentSeasonDb.db_name = seasonDbPath; // Store the path for checking
+    currentSeasonDb.db_name = seasonDbPath;
 
     try {
         await currentSeasonDb.getData("/players");
@@ -89,30 +89,20 @@ async function ensureCurrentSeasonDb() {
             console.log(`Seasonal database ${seasonDbPath} initialized with players from all-time DB and reset ELO/stats.`);
         } else {
             console.error(`Error accessing seasonal database ${seasonDbPath}:`, error);
-            throw error; // Rethrow if it's not a DataError (e.g. file system issue)
+            throw error;
         }
     }
     return currentSeasonDb;
 }
 
-
-// Calculate new ELO ratings after a match
 function calculateElo(winnerElo, loserElo) {
     const expectedWinner = 1 / (1 + Math.pow(10, (loserElo - winnerElo) / 400));
     const expectedLoser = 1 / (1 + Math.pow(10, (winnerElo - loserElo) / 400));
-
     const newWinnerElo = Math.round(winnerElo + K_FACTOR * (1 - expectedWinner));
     const newLoserElo = Math.round(loserElo + K_FACTOR * (0 - expectedLoser));
-
-    return {
-        newWinnerElo,
-        newLoserElo,
-        winnerGain: newWinnerElo - winnerElo,
-        loserLoss: loserElo - newLoserElo
-    };
+    return { newWinnerElo, newLoserElo, winnerGain: newWinnerElo - winnerElo, loserLoss: loserElo - newLoserElo };
 }
 
-// Helper function to get player data from a specific DB
 async function getPlayer(playerId, dbInstance) {
     try {
         return await dbInstance.getData(`/players/${playerId}`);
@@ -121,12 +111,10 @@ async function getPlayer(playerId, dbInstance) {
     }
 }
 
-// Undo last match (now considers both databases)
 async function undoLastMatch(message) {
     try {
         await ensureCurrentSeasonDb();
 
-        // --- Undo Seasonal Match ---
         const seasonalMatches = await currentSeasonDb.getData('/matches');
         if (!seasonalMatches || seasonalMatches.length === 0) {
             return message.reply('No matches found in the current season to undo.');
@@ -137,20 +125,17 @@ async function undoLastMatch(message) {
         const seasonalLoser = await getPlayer(lastSeasonalMatch.loserId, currentSeasonDb);
 
         if (!seasonalWinner || !seasonalLoser) {
-            // This might happen if a player was somehow removed from seasonal DB
-            // or if the match data is corrupt. For robustness, try to restore from all-time.
-            await currentSeasonDb.push('/matches', seasonalMatches); // Put it back if we can't process
+            await currentSeasonDb.push('/matches', seasonalMatches);
             return message.reply('Could not find players from the last seasonal match. Seasonal data might be inconsistent.');
         }
         
-        const sWinnerName = seasonalWinner.name; // Store before potential modification if name changes allowed
+        const sWinnerName = seasonalWinner.name;
         const sLoserName = seasonalLoser.name;
-        const sWinnerOldElo = seasonalWinner.elo + lastSeasonalMatch.winnerGain; // Correctly calculate original ELO
-        const sLoserOldElo = seasonalLoser.elo - lastSeasonalMatch.loserLoss;   // Correctly calculate original ELO
+        const sWinnerOldElo = seasonalWinner.elo + lastSeasonalMatch.winnerGain;
+        const sLoserOldElo = seasonalLoser.elo - lastSeasonalMatch.loserLoss;
 
-
-        seasonalWinner.elo = seasonalWinner.elo - lastSeasonalMatch.winnerGain; // Revert ELO
-        seasonalLoser.elo = seasonalLoser.elo + lastSeasonalMatch.loserLoss;   // Revert ELO
+        seasonalWinner.elo -= lastSeasonalMatch.winnerGain;
+        seasonalLoser.elo += lastSeasonalMatch.loserLoss;
         seasonalWinner.wins--;
         seasonalLoser.losses--;
         seasonalWinner.matches = seasonalWinner.matches.filter(match => match.timestamp !== lastSeasonalMatch.timestamp);
@@ -161,43 +146,26 @@ async function undoLastMatch(message) {
         await currentSeasonDb.push('/matches', seasonalMatches);
 
         // --- Undo All-Time Match ---
-        // Find the corresponding all-time match using matchId (timestamp)
         let allTimeMatches = await allTimeDb.getData('/matches');
-        const allTimeMatchIndex = allTimeMatches.findIndex(m => m.matchId === lastSeasonalMatch.matchId);
+        // Find the corresponding all-time match using the unique timestamp
+        const allTimeMatchIndex = allTimeMatches.findIndex(m => m.timestamp === lastSeasonalMatch.timestamp);
 
         if (allTimeMatchIndex === -1) {
-            // This is a critical inconsistency. Log it and inform user.
-            // The seasonal match was undone, but the all-time couldn't be found.
-            console.error(`CRITICAL: Could not find all-time match with ID ${lastSeasonalMatch.matchId} to undo.`);
-            message.reply(`Seasonal match reverted. However, the corresponding all-time match (ID: ${lastSeasonalMatch.matchId}) could not be found and undone. Please check manually.`);
-             // Send seasonal confirmation anyway, as that part worked
-            const embedSeasonalOnly = new EmbedBuilder()
-                .setTitle('Seasonal Match Reverted (All-Time Error)')
-                .setColor('#FFA500') // Orange for warning
-                .setDescription(`The last seasonal match has been reverted. Corresponding all-time match NOT found.`)
-                .addFields(
-                    { name: 'Reverted Seasonal Match', value: `${sWinnerName} vs ${sLoserName}`, inline: false },
-                    { name: `${sWinnerName} (Season)`, value: `${sWinnerOldElo} → ${seasonalWinner.elo} (-${lastSeasonalMatch.winnerGain} ELO)`, inline: true },
-                    { name: `${sLoserName} (Season)`, value: `${sLoserOldElo} → ${seasonalLoser.elo} (+${lastSeasonalMatch.loserLoss} ELO)`, inline: true }
-                )
-                .setFooter({ text: 'Office Pool ELO System - Partial Undo' });
-            message.channel.send({ embeds: [embedSeasonalOnly] }); // Use channel.send if reply was already used.
+            console.error(`CRITICAL: Could not find all-time match with timestamp ${lastSeasonalMatch.timestamp} to undo.`);
+            message.reply(`Seasonal match reverted. However, the corresponding all-time match (Timestamp: ${lastSeasonalMatch.timestamp}) could not be found and undone. Please check manually.`);
             return;
         }
 
         const lastAllTimeMatch = allTimeMatches[allTimeMatchIndex];
-        allTimeMatches.splice(allTimeMatchIndex, 1); // Remove the match
+        allTimeMatches.splice(allTimeMatchIndex, 1);
 
         const allTimeWinner = await getPlayer(lastAllTimeMatch.winnerId, allTimeDb);
         const allTimeLoser = await getPlayer(lastAllTimeMatch.loserId, allTimeDb);
 
         if (!allTimeWinner || !allTimeLoser) {
-             // This shouldn't happen if they were in the match, but good to check.
-            console.error(`CRITICAL: Players from all-time match ID ${lastAllTimeMatch.matchId} not found in all-time DB.`);
-            // At this point, seasonal is undone, all-time match entry is removed, but player stats can't be updated.
-            // This is a partial failure.
-            await allTimeDb.push('/matches', allTimeMatches); // Save the modified matches list
-            message.reply(`Seasonal match reverted. All-time match entry removed. However, player data for all-time (ID: ${lastAllTimeMatch.matchId}) could not be fully reverted. Please check manually.`);
+            console.error(`CRITICAL: Players from all-time match timestamp ${lastAllTimeMatch.timestamp} not found in all-time DB.`);
+            await allTimeDb.push('/matches', allTimeMatches);
+            message.reply(`Seasonal match reverted. All-time match entry removed. However, player data for all-time (Timestamp: ${lastAllTimeMatch.timestamp}) could not be fully reverted. Please check manually.`);
             return;
         }
 
@@ -205,14 +173,13 @@ async function undoLastMatch(message) {
         allTimeLoser.elo += lastAllTimeMatch.loserLoss;
         allTimeWinner.wins--;
         allTimeLoser.losses--;
-        allTimeWinner.matches = allTimeWinner.matches.filter(match => match.timestamp !== lastAllTimeMatch.timestamp); // Or match.matchId
-        allTimeLoser.matches = allTimeLoser.matches.filter(match => match.timestamp !== lastAllTimeMatch.timestamp); // Or match.matchId
+        allTimeWinner.matches = allTimeWinner.matches.filter(match => match.timestamp !== lastAllTimeMatch.timestamp);
+        allTimeLoser.matches = allTimeLoser.matches.filter(match => match.timestamp !== lastAllTimeMatch.timestamp);
 
         await allTimeDb.push(`/players/${allTimeWinner.id}`, allTimeWinner);
         await allTimeDb.push(`/players/${allTimeLoser.id}`, allTimeLoser);
         await allTimeDb.push('/matches', allTimeMatches);
 
-        // Send confirmation (reflecting seasonal changes primarily)
         const embed = new EmbedBuilder()
             .setTitle('Match Reverted (Season & All-Time)')
             .setColor('#FF3300')
@@ -225,86 +192,57 @@ async function undoLastMatch(message) {
                 { name: `${allTimeLoser.name} (All-Time ELO)`, value: `${allTimeLoser.elo - lastAllTimeMatch.loserLoss} → ${allTimeLoser.elo}`, inline: true}
             )
             .setFooter({ text: 'Office Pool ELO System' });
-
         message.reply({ embeds: [embed] });
-
     } catch (error) {
         console.error('Error undoing last match:', error);
         message.reply('Error undoing last match. Check console for details.');
     }
 }
 
-
-// Register a new player
 async function registerPlayer(message, args) {
-    if (args.length < 1) {
-        return message.reply('Please provide a name. Usage: `!pool register YourName`');
-    }
-
+    if (args.length < 1) return message.reply('Please provide a name. Usage: `!pool register YourName`');
     const playerName = args.join(' ');
     const playerId = message.author.id;
+    await ensureCurrentSeasonDb();
 
-    await ensureCurrentSeasonDb(); // Ensure seasonal DB is ready
-
-    // Register in All-Time DB
     let existingAllTimePlayer = await getPlayer(playerId, allTimeDb);
     if (existingAllTimePlayer) {
         message.reply(`You are already registered in the all-time records as ${existingAllTimePlayer.name}.`);
     } else {
-        const allTimePlayerData = {
-            id: playerId, name: playerName, elo: DEFAULT_ELO,
-            wins: 0, losses: 0, matches: []
-        };
+        const allTimePlayerData = { id: playerId, name: playerName, elo: DEFAULT_ELO, wins: 0, losses: 0, matches: [] };
         await allTimeDb.push(`/players/${playerId}`, allTimePlayerData);
         message.channel.send(`Successfully registered **${playerName}** for all-time records with ELO ${DEFAULT_ELO}.`);
     }
 
-    // Register in Seasonal DB
     let existingSeasonalPlayer = await getPlayer(playerId, currentSeasonDb);
     if (existingSeasonalPlayer) {
-        // If they exist in seasonal, it means they were copied at season start or registered earlier this season
         message.channel.send(`You are already part of the current season (${existingSeasonalPlayer.name}, ELO: ${existingSeasonalPlayer.elo}).`);
     } else {
-        // New to this season (either new player entirely, or joined mid-season after being in all-time)
-        const seasonalPlayerData = {
-            id: playerId, name: playerName, elo: DEFAULT_ELO, // All players start season with default ELO
-            wins: 0, losses: 0, matches: []
-        };
+        const seasonalPlayerData = { id: playerId, name: playerName, elo: DEFAULT_ELO, wins: 0, losses: 0, matches: [] };
         await currentSeasonDb.push(`/players/${playerId}`, seasonalPlayerData);
         message.channel.send(`Added **${playerName}** to the current season with ELO ${DEFAULT_ELO}.`);
     }
 }
 
-// Record match result
 async function recordMatch(message, args) {
-    if (args.length < 1) {
-        return message.reply('Please mention the player you defeated. Usage: `!pool match @opponent`');
-    }
-
-    await ensureCurrentSeasonDb(); // Crucial for getting seasonal data
+    if (args.length < 1) return message.reply('Please mention the player you defeated. Usage: `!pool match @opponent`');
+    await ensureCurrentSeasonDb();
 
     const winnerId = message.author.id;
     const mention = message.mentions.users.first();
-    if (!mention) {
-        return message.reply('Please mention the player you defeated.');
-    }
+    if (!mention) return message.reply('Please mention the player you defeated.');
     const loserId = mention.id;
 
-    if (winnerId === loserId) {
-        return message.reply('You cannot play against yourself.');
-    }
+    if (winnerId === loserId) return message.reply('You cannot play against yourself.');
 
-    // Get players from both databases
     let seasonWinner = await getPlayer(winnerId, currentSeasonDb);
     let seasonLoser = await getPlayer(loserId, currentSeasonDb);
     let allTimeWinner = await getPlayer(winnerId, allTimeDb);
     let allTimeLoser = await getPlayer(loserId, allTimeDb);
 
-    // Ensure players are registered (especially for seasonal, they might need to be added if it's their first game of season)
     if (!allTimeWinner) return message.reply('You (winner) need to register first with `!pool register YourName`.');
     if (!allTimeLoser) return message.reply(`The player you mentioned (loser) is not registered yet (all-time).`);
 
-    // If players exist in all-time but not season (e.g. first game of new season for them), create seasonal entry
     if (!seasonWinner) {
         seasonWinner = { id: winnerId, name: allTimeWinner.name, elo: DEFAULT_ELO, wins: 0, losses: 0, matches: [] };
         await currentSeasonDb.push(`/players/${winnerId}`, seasonWinner);
@@ -314,52 +252,32 @@ async function recordMatch(message, args) {
         await currentSeasonDb.push(`/players/${loserId}`, seasonLoser);
     }
     
-    const matchTimestamp = new Date().toISOString(); // Unique ID for the match
+    const matchTimestamp = new Date().toISOString();
 
-    // --- Seasonal ELO Calculation & Update ---
     const seasonalEloResult = calculateElo(seasonWinner.elo, seasonLoser.elo);
     seasonWinner.elo = seasonalEloResult.newWinnerElo;
     seasonWinner.wins++;
-    seasonWinner.matches.push({
-        opponent: loserId, result: 'win', eloChange: seasonalEloResult.winnerGain, timestamp: matchTimestamp
-    });
+    seasonWinner.matches.push({ opponent: loserId, result: 'win', eloChange: seasonalEloResult.winnerGain, timestamp: matchTimestamp });
     seasonLoser.elo = seasonalEloResult.newLoserElo;
     seasonLoser.losses++;
-    seasonLoser.matches.push({
-        opponent: winnerId, result: 'loss', eloChange: -seasonalEloResult.loserLoss, timestamp: matchTimestamp
-    });
-    const seasonalMatchData = {
-        winnerId, loserId, winnerElo: seasonWinner.elo, loserElo: seasonLoser.elo,
-        winnerGain: seasonalEloResult.winnerGain, loserLoss: seasonalEloResult.loserLoss,
-        timestamp: matchTimestamp, matchId: matchTimestamp
-    };
+    seasonLoser.matches.push({ opponent: winnerId, result: 'loss', eloChange: -seasonalEloResult.loserLoss, timestamp: matchTimestamp });
+    const seasonalMatchData = { winnerId, loserId, winnerElo: seasonWinner.elo, loserElo: seasonLoser.elo, winnerGain: seasonalEloResult.winnerGain, loserLoss: seasonalEloResult.loserLoss, timestamp: matchTimestamp };
     await currentSeasonDb.push(`/players/${winnerId}`, seasonWinner);
     await currentSeasonDb.push(`/players/${loserId}`, seasonLoser);
-    await currentSeasonDb.push('/matches[]', seasonalMatchData, true); // Append to matches array
+    await currentSeasonDb.push('/matches[]', seasonalMatchData, true);
 
-    // --- All-Time ELO Calculation & Update ---
     const allTimeEloResult = calculateElo(allTimeWinner.elo, allTimeLoser.elo);
     allTimeWinner.elo = allTimeEloResult.newWinnerElo;
-    allTimeWinner.wins++; // Increment all-time wins as well
-    allTimeWinner.matches.push({
-        opponent: loserId, result: 'win', eloChange: allTimeEloResult.winnerGain, timestamp: matchTimestamp
-    });
+    allTimeWinner.wins++;
+    allTimeWinner.matches.push({ opponent: loserId, result: 'win', eloChange: allTimeEloResult.winnerGain, timestamp: matchTimestamp });
     allTimeLoser.elo = allTimeEloResult.newLoserElo;
-    allTimeLoser.losses++; // Increment all-time losses
-    allTimeLoser.matches.push({
-        opponent: winnerId, result: 'loss', eloChange: -allTimeEloResult.loserLoss, timestamp: matchTimestamp
-    });
-    const allTimeMatchData = {
-        winnerId, loserId, winnerElo: allTimeWinner.elo, loserElo: allTimeLoser.elo,
-        winnerGain: allTimeEloResult.winnerGain, loserLoss: allTimeEloResult.loserLoss,
-        timestamp: matchTimestamp, matchId: matchTimestamp // Same matchId
-    };
+    allTimeLoser.losses++;
+    allTimeLoser.matches.push({ opponent: winnerId, result: 'loss', eloChange: -allTimeEloResult.loserLoss, timestamp: matchTimestamp });
+    const allTimeMatchData = { winnerId, loserId, winnerElo: allTimeWinner.elo, loserElo: allTimeLoser.elo, winnerGain: allTimeEloResult.winnerGain, loserLoss: allTimeEloResult.loserLoss, timestamp: matchTimestamp };
     await allTimeDb.push(`/players/${winnerId}`, allTimeWinner);
     await allTimeDb.push(`/players/${loserId}`, allTimeLoser);
-    await allTimeDb.push('/matches[]', allTimeMatchData, true); // Append to matches array
+    await allTimeDb.push('/matches[]', allTimeMatchData, true);
 
-
-    // Send confirmation (seasonal focus)
     const embed = new EmbedBuilder()
         .setTitle('Match Result Recorded (Seasonal)')
         .setColor('#00FF00')
@@ -371,53 +289,32 @@ async function recordMatch(message, args) {
         .setFooter({ text: 'Office Pool ELO System' });
 
     const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`break_${winnerId}_${loserId}_${matchTimestamp}_winner`)
-            .setLabel(seasonWinner.name) // Use seasonal name, likely same
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId(`break_${winnerId}_${loserId}_${matchTimestamp}_loser`)
-            .setLabel(seasonLoser.name)
-            .setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`break_${winnerId}_${loserId}_${matchTimestamp}_winner`).setLabel(seasonWinner.name).setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`break_${winnerId}_${loserId}_${matchTimestamp}_loser`).setLabel(seasonLoser.name).setStyle(ButtonStyle.Secondary)
     );
 
-    message.reply({
-        embeds: [embed],
-        components: [row],
-        content: '**Breaker:** Select who made the break shot for this match.'
-    });
+    message.reply({ embeds: [embed], components: [row], content: '**Breaker:** Select who made the break shot for this match.' });
 }
 
-// Show current (seasonal) rankings
 async function showRankings(message) {
     try {
         await ensureCurrentSeasonDb();
         const players = await currentSeasonDb.getData('/players');
-
-        // Filter for players who have played at least one game (wins + losses > 0)
         const activePlayers = Object.values(players).filter(player => (player.wins + player.losses) > 0);
 
         if (activePlayers.length === 0) {
             return message.reply('No players have recorded any games in the current season yet.');
         }
 
-        // Sort the active players by their ELO in descending order
         const rankedPlayers = activePlayers.sort((a, b) => b.elo - a.elo);
-
         const embed = new EmbedBuilder()
             .setTitle(`Office Pool Rankings (Current Season: ${getSeasonDbPath().split('_').slice(1).join('/')})`)
             .setColor('#0099FF')
             .setFooter({ text: 'Office Pool ELO System - Seasonal Rankings' });
 
-        // Display up to the top 10 active players
         rankedPlayers.slice(0, 10).forEach((player, index) => {
-            embed.addFields({
-                name: `#${index + 1} ${player.name}`,
-                value: `ELO: ${player.elo} | W: ${player.wins} | L: ${player.losses}`,
-                inline: false
-            });
+            embed.addFields({ name: `#${index + 1} ${player.name}`, value: `ELO: ${player.elo} | W: ${player.wins} | L: ${player.losses}`, inline: false });
         });
-
         message.reply({ embeds: [embed] });
     } catch (error) {
         console.error('Error showing seasonal rankings:', error);
@@ -429,30 +326,18 @@ async function showRankings(message) {
     }
 }
 
-// Show All-Time rankings
 async function showAllTimeRankings(message) {
     try {
         const players = await allTimeDb.getData('/players');
-
-        if (Object.keys(players).length === 0) {
-            return message.reply('No players are registered for all-time records yet.');
-        }
-
+        if (Object.keys(players).length === 0) return message.reply('No players are registered for all-time records yet.');
         const rankedPlayers = Object.values(players).sort((a, b) => b.elo - a.elo);
-
         const embed = new EmbedBuilder()
             .setTitle('Office Pool Rankings (All-Time)')
-            .setColor('#DAA520') // Gold-ish color
+            .setColor('#DAA520')
             .setFooter({ text: 'Office Pool ELO System - All-Time Rankings' });
-
         rankedPlayers.slice(0, 10).forEach((player, index) => {
-            embed.addFields({
-                name: `#${index + 1} ${player.name}`,
-                value: `ELO: ${player.elo} | W: ${player.wins} | L: ${player.losses}`,
-                inline: false
-            });
+            embed.addFields({ name: `#${index + 1} ${player.name}`, value: `ELO: ${player.elo} | W: ${player.wins} | L: ${player.losses}`, inline: false });
         });
-
         message.reply({ embeds: [embed] });
     } catch (error) {
         console.error('Error showing all-time rankings:', error);
@@ -460,29 +345,15 @@ async function showAllTimeRankings(message) {
     }
 }
 
-
-// Show player stats (seasonal focus, with all-time ELO)
 async function showPlayerStats(message, args) {
     try {
         await ensureCurrentSeasonDb();
-        let playerId;
-
-        if (message.mentions.users.size > 0) {
-            playerId = message.mentions.users.first().id;
-        } else {
-            playerId = message.author.id;
-        }
-
+        let playerId = message.mentions.users.size > 0 ? message.mentions.users.first().id : message.author.id;
         const seasonPlayer = await getPlayer(playerId, currentSeasonDb);
-        const allTimePlayer = await getPlayer(playerId, allTimeDb); // Fetch all-time for comparison
+        const allTimePlayer = await getPlayer(playerId, allTimeDb);
 
-        if (!seasonPlayer && !allTimePlayer) { // If not in either, truly not registered
-             return message.reply('This player is not registered in any records yet.');
-        }
-        if (!seasonPlayer) { // In all-time but not played this season
-            return message.reply(`**${allTimePlayer.name}** is registered all-time (ELO: ${allTimePlayer.elo}) but has no stats for the current season yet.`);
-        }
-
+        if (!allTimePlayer) return message.reply('This player is not registered in any records yet.');
+        if (!seasonPlayer) return message.reply(`**${allTimePlayer.name}** is registered all-time (ELO: ${allTimePlayer.elo}) but has no stats for the current season yet.`);
 
         const embed = new EmbedBuilder()
             .setTitle(`${seasonPlayer.name}'s Stats (Current Season)`)
@@ -491,34 +362,24 @@ async function showPlayerStats(message, args) {
                 { name: 'Season ELO', value: `${seasonPlayer.elo}`, inline: true },
                 { name: 'Season Wins', value: `${seasonPlayer.wins}`, inline: true },
                 { name: 'Season Losses', value: `${seasonPlayer.losses}`, inline: true },
-                { name: 'Season Win Rate', value: `${seasonPlayer.wins + seasonPlayer.losses > 0 ? Math.round((seasonPlayer.wins / (seasonPlayer.wins + seasonPlayer.losses)) * 100) : 0}%`, inline: true }
+                { name: 'Season Win Rate', value: `${seasonPlayer.wins + seasonPlayer.losses > 0 ? Math.round((seasonPlayer.wins / (seasonPlayer.wins + seasonPlayer.losses)) * 100) : 0}%`, inline: true },
+                { name: 'All-Time ELO', value: `${allTimePlayer.elo}`, inline: true }
             )
             .setFooter({ text: 'Office Pool ELO System' });
-
-        if (allTimePlayer) {
-            embed.addFields({ name: 'All-Time ELO', value: `${allTimePlayer.elo}`, inline: true });
-        }
-
 
         if (seasonPlayer.matches.length > 0) {
             const recentMatches = seasonPlayer.matches.slice(-5).reverse();
             let matchesText = '';
-
             for (const match of recentMatches) {
-                // Opponent name should be fetched from seasonal DB, or all-time as fallback.
-                // For simplicity here, we assume opponent is in seasonal or it's less critical for this display.
-                let opponent = await getPlayer(match.opponent, currentSeasonDb);
-                if (!opponent) opponent = await getPlayer(match.opponent, allTimeDb); // Fallback
+                let opponent = await getPlayer(match.opponent, currentSeasonDb) || await getPlayer(match.opponent, allTimeDb);
                 const opponentName = opponent ? opponent.name : 'Unknown Player';
                 const result = match.result === 'win' ? 'Won' : 'Lost';
                 const eloChange = match.eloChange > 0 ? `+${match.eloChange}` : match.eloChange;
                 const date = new Date(match.timestamp).toLocaleDateString();
-
                 matchesText += `${result} vs ${opponentName} (Season ELO ${eloChange}) - ${date}\n`;
             }
             embed.addFields({ name: 'Recent Seasonal Matches', value: matchesText || 'No matches yet', inline: false });
         }
-
         message.reply({ embeds: [embed] });
     } catch (error) {
         console.error("Error showing player stats:", error);
@@ -531,14 +392,14 @@ async function generateTournament(message, args) {
     try {
         await ensureCurrentSeasonDb(); // Ensure we have seasonal data
 
-        function nextPowerOf2(n) { /* ... (same as before) ... */ 
+        function nextPowerOf2(n) {
             let power = 1;
             while (power < n) {
                 power *= 2;
             }
             return power;
         }
-        function shuffleArray(array) { /* ... (same as before) ... */ 
+        function shuffleArray(array) {
             const newArray = [...array];
             for (let i = newArray.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
@@ -614,7 +475,6 @@ async function generateTournament(message, args) {
             }
         });
         
-        // ... (rest of subsequent rounds logic - same as before, just ensure player data comes from seasonal)
         const subsequentBreaksInfo = [];
         let currentMatchNumber = round1Matches.length;
         let matchesInPreviousRound = round1Matches.length;
@@ -646,7 +506,6 @@ async function generateTournament(message, args) {
             }
             embed.addFields({ name: 'Subsequent Rounds & Breaks', value: subsequentBreaksValue, inline: false });
         }
-        // ---
 
         message.reply({ embeds: [embed] });
 
@@ -661,7 +520,6 @@ async function showMyStats(message) {
     try {
         const requesterId = message.author.id;
 
-        // Fetch the player and all matches from the all-time database
         const allPlayers = await allTimeDb.getData('/players');
         const player = allPlayers[requesterId];
 
@@ -670,25 +528,18 @@ async function showMyStats(message) {
         }
 
         const allMatches = await allTimeDb.getData('/matches');
-
-        // Filter for matches involving the player
         const playerMatches = allMatches.filter(m => m.winnerId === requesterId || m.loserId === requesterId);
 
         if (playerMatches.length === 0) {
             return message.reply('You have not played any matches yet.');
         }
 
-        // Calculate Overall Win Percentage from the player object
         const totalGames = player.wins + player.losses;
         const overallWinPercentage = totalGames > 0 ? (player.wins / totalGames) * 100 : 0;
-
-        // Calculate head-to-head stats
         const opponentStats = {};
 
         for (const match of playerMatches) {
             const opponentId = match.winnerId === requesterId ? match.loserId : match.winnerId;
-
-            // Initialize opponent stats if they don't exist
             if (!opponentStats[opponentId]) {
                 opponentStats[opponentId] = {
                     wins: 0,
@@ -696,8 +547,6 @@ async function showMyStats(message) {
                     name: allPlayers[opponentId] ? allPlayers[opponentId].name : 'Unknown Player'
                 };
             }
-
-            // Tally wins and losses against the opponent
             if (match.winnerId === requesterId) {
                 opponentStats[opponentId].wins++;
             } else {
@@ -705,12 +554,11 @@ async function showMyStats(message) {
             }
         }
 
-        // Create the description for the embed
         let opponentStatsDescription = '';
         const sortedOpponents = Object.entries(opponentStats).sort(([, a], [, b]) => {
             const aTotal = a.wins + a.losses;
             const bTotal = b.wins + b.losses;
-            return bTotal - aTotal; // Sort by most games played against
+            return bTotal - aTotal;
         });
 
         for (const [opponentId, stats] of sortedOpponents) {
@@ -725,11 +573,11 @@ async function showMyStats(message) {
 
         const embed = new EmbedBuilder()
             .setTitle(`Your All-Time Stats: ${player.name}`)
-            .setColor('#1E90FF') // DodgerBlue
+            .setColor('#1E90FF')
             .addFields(
                 { name: 'Overall Win/Loss', value: `${player.wins}W / ${player.losses}L`, inline: true },
                 { name: 'Overall Win Rate', value: `${overallWinPercentage.toFixed(2)}%`, inline: true },
-                { name: '\u200B', value: '\u200B', inline: false }, // Spacer
+                { name: '\u200B', value: '\u200B', inline: false },
                 { name: 'Head-to-Head Records', value: opponentStatsDescription, inline: false }
             )
             .setFooter({ text: 'Office Pool ELO System - All-Time Personal Stats' });
@@ -748,27 +596,26 @@ async function showMyStats(message) {
 
 async function showBreakerStats(message) {
     try {
-        await ensureCurrentSeasonDb(); // Ensure the current seasonal database is loaded
-        const seasonName = getSeasonDbPath().split('_').slice(1).join('/'); // Extracts YYYY/MM for display
-
         let matches;
+        let allPlayers;
         try {
-            matches = await currentSeasonDb.getData('/matches');
+            matches = await allTimeDb.getData('/matches');
+            allPlayers = await allTimeDb.getData('/players');
         } catch (e) {
-            if (e instanceof DataError && e.message.includes("Can't find dataPath: /matches")) {
-                return message.reply(`No match data found for the current season (${seasonName}). Play some matches first!`);
+            if (e instanceof DataError) {
+                return message.reply('No all-time match data found. Play some matches first!');
             }
-            throw e; // Re-throw other errors
+            throw e;
         }
 
         if (!matches || matches.length === 0) {
-            return message.reply(`No matches found in the current season (${seasonName}) to analyze for breaker stats.`);
+            return message.reply('No matches found in the all-time records to analyze for breaker stats.');
         }
 
         let totalMatchesWithBreakerInfo = 0;
         let breakerWins = 0;
-        const playerBreakCounts = {}; // Stores how many times each player broke
-        const playerGamesWithBreakInfo = {}; // Stores how many games each player played that had breaker info recorded
+        const playerBreakCounts = {};
+        const playerGamesWithBreakInfo = {};
 
         for (const match of matches) {
             if (match.breakerId && typeof match.breakerId === 'string' && match.breakerId.trim() !== '') {
@@ -778,118 +625,72 @@ async function showBreakerStats(message) {
                 }
                 const breakerId = match.breakerId;
                 playerBreakCounts[breakerId] = (playerBreakCounts[breakerId] || 0) + 1;
-
-                // Increment games played (with break info) for both players in the match
                 if (match.winnerId) {
                     playerGamesWithBreakInfo[match.winnerId] = (playerGamesWithBreakInfo[match.winnerId] || 0) + 1;
                 }
-                if (match.loserId) {
-                    // Avoid double counting if winner and loser are the same (shouldn't happen in a valid match)
-                    // or if a player ID is somehow null/undefined (though less likely for winner/loser)
-                    if (match.winnerId !== match.loserId) {
-                         playerGamesWithBreakInfo[match.loserId] = (playerGamesWithBreakInfo[match.loserId] || 0) + 1;
-                    } else if (!match.winnerId && match.loserId) { // Only loserId present
-                         playerGamesWithBreakInfo[match.loserId] = (playerGamesWithBreakInfo[match.loserId] || 0) + 1;
-                    }
+                if (match.loserId && match.winnerId !== match.loserId) {
+                    playerGamesWithBreakInfo[match.loserId] = (playerGamesWithBreakInfo[match.loserId] || 0) + 1;
                 }
             }
         }
 
         if (totalMatchesWithBreakerInfo === 0) {
-            return message.reply(`No matches with breaker information found in the current season (${seasonName}). Make sure to select who broke after reporting a match!`);
+            return message.reply('No matches with breaker information found in the all-time records. Make sure to select who broke after reporting a match!');
         }
 
         const overallBreakerWinPercentage = (breakerWins / totalMatchesWithBreakerInfo) * 100;
 
-        // --- Prepare Player Specific Break Statistics ---
         let playerBreakStatsText = "No individual player break statistics available.";
+        const relevantPlayerIds = Object.keys(playerGamesWithBreakInfo);
 
-        const relevantPlayerIds = new Set([
-            ...Object.keys(playerBreakCounts),
-            ...Object.keys(playerGamesWithBreakInfo)
-        ]);
-
-        if (relevantPlayerIds.size > 0) {
+        if (relevantPlayerIds.length > 0) {
             const breakStatsArray = [];
             for (const playerId of relevantPlayerIds) {
                 const timesBroke = playerBreakCounts[playerId] || 0;
-                const totalGamesForPlayerWithBreakInfo = playerGamesWithBreakInfo[playerId] || 0;
-                let playerBreakPercentage = 0;
-
-                if (totalGamesForPlayerWithBreakInfo > 0) {
-                    playerBreakPercentage = (timesBroke / totalGamesForPlayerWithBreakInfo) * 100;
-                }
-
-                // Only list players who have participated in at least one game with break info
-                if (totalGamesForPlayerWithBreakInfo > 0) {
-                    let playerName = `Player ID ${playerId}`;
-                    const seasonalPlayer = await getPlayer(playerId, currentSeasonDb);
-                    if (seasonalPlayer && seasonalPlayer.name) {
-                        playerName = seasonalPlayer.name;
-                    } else {
-                        const allTimePlayerInfo = await getPlayer(playerId, allTimeDb);
-                        if (allTimePlayerInfo && allTimePlayerInfo.name) {
-                            playerName = allTimePlayerInfo.name;
-                        } else {
-                            console.warn(`Breaker Stats: Player name not found for ID ${playerId}`);
-                        }
-                    }
-                    breakStatsArray.push({
-                        name: playerName,
-                        timesBroke: timesBroke,
-                        totalGamesWithInfo: totalGamesForPlayerWithBreakInfo,
-                        breakPercentage: playerBreakPercentage
-                    });
-                }
+                const totalGamesForPlayerWithBreakInfo = playerGamesWithBreakInfo[playerId];
+                const playerBreakPercentage = (timesBroke / totalGamesForPlayerWithBreakInfo) * 100;
+                const playerName = allPlayers[playerId] ? allPlayers[playerId].name : `Player ID ${playerId}`;
+                breakStatsArray.push({ name: playerName, timesBroke, totalGamesWithInfo: totalGamesForPlayerWithBreakInfo, breakPercentage: playerBreakPercentage });
             }
 
-            // Sort by player's break percentage (desc), then by times broke (desc), then by name (asc)
             breakStatsArray.sort((a, b) => {
-                if (b.breakPercentage !== a.breakPercentage) {
-                    return b.breakPercentage - a.breakPercentage;
-                }
-                if (b.timesBroke !== a.timesBroke) {
-                    return b.timesBroke - a.timesBroke;
-                }
+                if (b.breakPercentage !== a.breakPercentage) return b.breakPercentage - a.breakPercentage;
+                if (b.timesBroke !== a.timesBroke) return b.timesBroke - a.timesBroke;
                 return a.name.localeCompare(b.name);
             });
-
+            
             const displayLimit = 15;
             if (breakStatsArray.length > 0) {
                 playerBreakStatsText = breakStatsArray
                     .slice(0, displayLimit)
                     .map(stat => `• ${stat.name}: Broke ${stat.timesBroke} times (${stat.breakPercentage.toFixed(1)}% of their ${stat.totalGamesWithInfo} games with break info)`)
                     .join('\n');
-
                 if (breakStatsArray.length > displayLimit) {
                     playerBreakStatsText += `\n...and ${breakStatsArray.length - displayLimit} more player(s).`;
                 }
-            } else {
-                 playerBreakStatsText = "No players found with recorded games and break information.";
             }
         }
-        // --- End Player Specific Break Statistics ---
 
         const embed = new EmbedBuilder()
-            .setTitle(`Breaker Statistics (Season: ${seasonName})`)
-            .setColor('#8A2BE2') // BlueViolet color
+            .setTitle(`Breaker Statistics (All-Time)`)
+            .setColor('#8A2BE2')
             .addFields(
                 { name: 'Matches Analyzed (with any breaker info)', value: `${totalMatchesWithBreakerInfo}`, inline: false },
                 { name: 'Overall Times Breaker Won Match', value: `${breakerWins}`, inline: false },
                 { name: 'Overall Breaker Win Percentage', value: `${overallBreakerWinPercentage.toFixed(2)}%`, inline: false },
                 { name: 'Player Break Frequencies (Ranked by % of Own Games Breaking)', value: playerBreakStatsText, inline: false }
             )
-            .setFooter({ text: 'Office Pool ELO System' });
+            .setFooter({ text: 'Office Pool ELO System - All-Time Stats' });
 
         message.reply({ embeds: [embed] });
 
     } catch (error) {
-        console.error('Error calculating breaker stats:', error);
-        message.reply('An error occurred while calculating breaker statistics. Please check the bot logs.');
+        console.error('Error calculating all-time breaker stats:', error);
+        message.reply('An error occurred while calculating all-time breaker statistics. Please check the bot logs.');
     }
 }
 
-// Show help message (add new alltimerankings command)
+// Show help message
 async function showHelp(message) {
     const embed = new EmbedBuilder()
         .setTitle('Office Pool ELO Bot Commands')
@@ -900,11 +701,11 @@ async function showHelp(message) {
             { name: '!pool match @opponent', value: 'Record that you won a match (updates seasonal and all-time ELO)', inline: false },
             { name: '!pool undo', value: 'Revert the last recorded match (seasonal & all-time)', inline: false },
             { name: '!pool rankings', value: 'Show current seasonal player rankings', inline: false },
-            { name: '!pool alltimerankings', value: 'Show all-time player rankings', inline: false }, // New command
+            { name: '!pool alltimerankings', value: 'Show all-time player rankings', inline: false },
             { name: '!pool stats [@player]', value: 'Show your/mentioned player\'s seasonal stats (and all-time ELO)', inline: false },
             { name: '!pool mystats', value: 'Shows your detailed all-time statistics against every opponent.', inline: false },
 	    { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket (uses seasonal ELOs)', inline: false },
-            { name: '!pool breakerstats', value: 'Show statistics on how often the breaker wins (current season)', inline: false },
+            { name: '!pool breakerstats', value: 'Show statistics on how often the breaker wins (all-time)', inline: false },
 	    { name: '!pool help', value: 'Show this help message', inline: false }
         )
         .setFooter({ text: 'Office Pool ELO System' });
@@ -912,56 +713,17 @@ async function showHelp(message) {
     message.reply({ embeds: [embed] });
 }
 
-// --- generateSwedishPoolTournamentName and randomChoice (same as before) ---
 function randomChoice(arr) {
-  if (!arr || arr.length === 0) {
-    return ""; 
-  }
+  if (!arr || arr.length === 0) return ""; 
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
 function generateSwedishPoolTournamentName() {
-  const prefixes = [
-    "Biljard", "Pool", "Kö", "Kritmagi", "Boll", "Klot", "Spel", "Hål", "Prick",
-    "Rackare", "Klack", "Kant", "Stöt", "Krita", "Triangel", "Grön", "Snooker",
-    "Vall", "Ficka", "Sänk", "Effekt", "Massé", "Vit", "Svart"
-  ];
-  const suffixes = [
-    "mästerskapet", "turneringen", "kampen", "utmaningen", "duellen", "spelandet",
-    "striden", "fajten", "tävlingen", "bataljen", "kalaset", "festen", "smällen",
-    "stöten", "bragden", "träffen", "mötet", "drabbningen", "uppgörelsen",
-    "ligan", "cupen", "serien", "racet", "jippot", "spektaklet", "finalen", "derbyt"
-  ];
-  const adjectives = [
-    "Kungliga", "Magnifika", "Legendariska", "Otroliga", "Galna", "Vilda", "Episka",
-    "Fantastiska", "Häftiga", "Glada", "Mäktiga", "Snabba", "Precisa", "Strategiska",
-    "Oförglömliga", "Prestigefyllda", "Heta", "Svettiga", "Spännande", "Årliga",
-    "Knivskarpa", "Ostoppbara", "Fruktade", "Ökända", "Hemliga", "Officiella",
-    "Inofficiella", "Kollegiala", "Obarmhärtiga", "Avgörande"
-  ];
-  const puns = [
-    "Kö-los Före Resten", "Boll-i-gare Än Andra", "Stöt-ande Bra Spel",
-    "Hål-i-ett Sällskap", "Krit-iskt Bra", "Rack-a Ner På Motståndaren",
-    "Klot-rent Mästerskap", "Kant-astiskt Spel", "Prick-säkra Spelare",
-    "Tri-angel-utmaningen", "Kö-a För Segern", "Boll-virtuoserna",
-    "Grön-saksodlare På Bordet", "Snooker-sväng Med Stil",
-    "Stöt-i-rätt-hålet", "Klack-sparkarnas Kamp", "Krit-a På Näsan",
-    "Rena Sänk-ningen", "Rack-a-rökare", "Helt Vall-galet",
-    "Fick-lampornas Kamp", "Effekt-sökarna", "Värsta Vit-ingarna",
-    "Svart-listade Spelare", "Triangel-dramat", "Krit-erianerna",
-    "Boll-änska Ligan", "Måndags-Massé", "Fredags-Fajten", "Team-Stöten",
-    "Projekt Pool", "Excel-lent Spel", "Kod & Klot", "Kaffe & Krita",
-    "Fika & Fickor", "Vall-öften", "Stöt-tålig Personal",
-    "Inga Sura Miner, Bara Sura Stötar"
-  ];
-  const locations = [
-    "i Kungsbacka", "från Kungsbackaskogarna", "vid Kungsbackaån",
-    "på Kungsbacka Torg", "i Göteborg", "på Hisingen", "vid Älvsborgsbron",
-    "i Majorna", "i Götet", "på Västkusten", "i Halland", "vid Tjolöholm",
-    "i Onsala", "i Fjärås", "i Anneberg", "runt Liseberg", "vid Feskekörka",
-    "i Kontoret", "på Jobbet", "i Fikarummet", "vid Kaffeautomaten",
-    "i Mötesrummet", "vid Skrivaren", "på Lagret", "i Källaren"
-  ];
+  const prefixes = ["Biljard", "Pool", "Kö", "Kritmagi", "Boll", "Klot", "Spel", "Hål", "Prick", "Rackare", "Klack", "Kant", "Stöt", "Krita", "Triangel", "Grön", "Snooker", "Vall", "Ficka", "Sänk", "Effekt", "Massé", "Vit", "Svart"];
+  const suffixes = ["mästerskapet", "turneringen", "kampen", "utmaningen", "duellen", "spelandet", "striden", "fajten", "tävlingen", "bataljen", "kalaset", "festen", "smällen", "stöten", "bragden", "träffen", "mötet", "drabbningen", "uppgörelsen", "ligan", "cupen", "serien", "racet", "jippot", "spektaklet", "finalen", "derbyt"];
+  const adjectives = ["Kungliga", "Magnifika", "Legendariska", "Otroliga", "Galna", "Vilda", "Episka", "Fantastiska", "Häftiga", "Glada", "Mäktiga", "Snabba", "Precisa", "Strategiska", "Oförglömliga", "Prestigefyllda", "Heta", "Svettiga", "Spännande", "Årliga", "Knivskarpa", "Ostoppbara", "Fruktade", "Ökända", "Hemliga", "Officiella", "Inofficiella", "Kollegiala", "Obarmhärtiga", "Avgörande"];
+  const puns = ["Kö-los Före Resten", "Boll-i-gare Än Andra", "Stöt-ande Bra Spel", "Hål-i-ett Sällskap", "Krit-iskt Bra", "Rack-a Ner På Motståndaren", "Klot-rent Mästerskap", "Kant-astiskt Spel", "Prick-säkra Spelare", "Tri-angel-utmaningen", "Kö-a För Segern", "Boll-virtuoserna", "Grön-saksodlare På Bordet", "Snooker-sväng Med Stil", "Stöt-i-rätt-hålet", "Klack-sparkarnas Kamp", "Krit-a På Näsan", "Rena Sänk-ningen", "Rack-a-rökare", "Helt Vall-galet", "Fick-lampornas Kamp", "Effekt-sökarna", "Värsta Vit-ingarna", "Svart-listade Spelare", "Triangel-dramat", "Krit-erianerna", "Boll-änska Ligan", "Måndags-Massé", "Fredags-Fajten", "Team-Stöten", "Projekt Pool", "Excel-lent Spel", "Kod & Klot", "Kaffe & Krita", "Fika & Fickor", "Vall-öften", "Stöt-tålig Personal", "Inga Sura Miner, Bara Sura Stötar"];
+  const locations = ["i Kungsbacka", "från Kungsbackaskogarna", "vid Kungsbackaån", "på Kungsbacka Torg", "i Göteborg", "på Hisingen", "vid Älvsborgsbron", "i Majorna", "i Götet", "på Västkusten", "i Halland", "vid Tjolöholm", "i Onsala", "i Fjärås", "i Anneberg", "runt Liseberg", "vid Feskekörka", "i Kontoret", "på Jobbet", "i Fikarummet", "vid Kaffeautomaten", "i Mötesrummet", "vid Skrivaren", "på Lagret", "i Källaren"];
   const nameStyles = [
     () => `Det ${randomChoice(adjectives)} ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
     () => `${randomChoice(prefixes)}${randomChoice(suffixes)} ${randomChoice(locations)}`,
@@ -979,65 +741,36 @@ function generateSwedishPoolTournamentName() {
 
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
-    await initializeAllTimeDatabase(); // Initialize the main all-time DB
+    await initializeAllTimeDatabase();
     try {
-        await ensureCurrentSeasonDb(); // Also ensure the current seasonal DB is ready on startup
+        await ensureCurrentSeasonDb();
     } catch (e) {
         console.error("CRITICAL: Could not initialize seasonal database on startup.", e);
-        // Depending on how critical this is, you might want to prevent the bot from fully operating
-        // or notify an admin. For now, it will log the error.
     }
     console.log("Bot is ready and databases are initialized/checked.");
 });
 
 client.on('messageCreate', async message => {
-    if (message.author.bot) return;
-    if (!message.content.startsWith('!pool')) return;
-
-    const args = message.content.slice(5).trim().split(/ +/); // Corrected slice index from 6 to 5
+    if (message.author.bot || !message.content.startsWith('!pool')) return;
+    const args = message.content.slice(5).trim().split(/ +/);
     const command = args.shift().toLowerCase();
-
     try {
-        // Ensure seasonal DB is ready before any command that might need it.
-        // Some commands might not need it, but this is a safe general approach.
-        // For commands like 'help', this is not strictly necessary but harmless.
-        if (command !== 'help') { // 'help' command doesn't interact with DBs
+        // Most commands need the seasonal DB. We can check for the few that don't.
+        if (command !== 'help' && command !== 'alltimerankings' && command !== 'mystats' && command !== 'breakerstats') {
              await ensureCurrentSeasonDb();
         }
-
         switch (command) {
-            case 'register':
-                await registerPlayer(message, args);
-                break;
-            case 'match':
-                await recordMatch(message, args);
-                break;
-            case 'undo':
-                await undoLastMatch(message);
-                break;
-            case 'rankings':
-                await showRankings(message);
-                break;
-            case 'alltimerankings': 
-                await showAllTimeRankings(message);
-                break;
-            case 'stats':
-                await showPlayerStats(message, args);
-                break;
-            case 'mystats':
-                await showMyStats(message);
-                break;
-	    case 'tournament':
-                await generateTournament(message, args);
-                break;
-	    case 'breakerstats':
-                await showBreakerStats(message);
-                break;		
-            case 'help':
-                await showHelp(message);
-                break;
-            default:
-                message.reply('Unknown command. Type `!pool help` for a list of commands.');
+            case 'register': await registerPlayer(message, args); break;
+            case 'match': await recordMatch(message, args); break;
+            case 'undo': await undoLastMatch(message); break;
+            case 'rankings': await showRankings(message); break;
+            case 'alltimerankings': await showAllTimeRankings(message); break;
+            case 'stats': await showPlayerStats(message, args); break;
+            case 'mystats': await showMyStats(message); break;
+            case 'tournament': await generateTournament(message, args); break;
+            case 'breakerstats': await showBreakerStats(message); break;
+            case 'help': await showHelp(message); break;
+            default: message.reply('Unknown command. Type `!pool help` for a list of commands.');
         }
     } catch (error) {
         console.error(`Error handling command '!pool ${command}':`, error);
@@ -1045,59 +778,51 @@ client.on('messageCreate', async message => {
     }
 });
 
-
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
-    if (!interaction.customId.startsWith('break_')) return;
+    if (!interaction.isButton() || !interaction.customId.startsWith('break_')) return;
 
     try {
-        await ensureCurrentSeasonDb(); // Breaker info pertains to a seasonal match
+        await ensureCurrentSeasonDb();
 
         const [, winnerId, loserId, matchTimestamp, who] = interaction.customId.split('_');
-        let breakerId;
-        if (who === 'winner') breakerId = winnerId;
-        else if (who === 'loser') breakerId = loserId;
-        else return; // Should not happen
+        const breakerId = who === 'winner' ? winnerId : loserId;
 
-        // Find the match in the *seasonal* database
+        // Find the match in the seasonal database using the timestamp
         let seasonalMatches = await currentSeasonDb.getData('/matches');
-        const matchIndex = seasonalMatches.findIndex(m => m.matchId === matchTimestamp);
+        const matchIndex = seasonalMatches.findIndex(m => m.timestamp === matchTimestamp);
 
         if (matchIndex === -1) {
-            await interaction.reply({ content: 'Could not find the seasonal match to update breaker info.', ephemeral: true });
-            return;
+            // It's possible the button is clicked after a new season started and the match is no longer in the current seasonal DB.
+            // We'll just update the all-time record in that case.
+            console.log(`Breaker button: Match ${matchTimestamp} not found in current seasonal DB. Checking all-time.`);
+        } else {
+            seasonalMatches[matchIndex].breakerId = breakerId;
+            await currentSeasonDb.push('/matches', seasonalMatches);
         }
-        
-        seasonalMatches[matchIndex].breakerId = breakerId;
-        await currentSeasonDb.push('/matches', seasonalMatches); // Save updated matches array
 
-        // Also update the all-time match record if you store breakerId there.
-        // For now, assuming breakerId is primarily a seasonal match detail.
-        // If you want it in all-time too, duplicate the find & update logic for allTimeDb.
-        // let allTimeMatches = await allTimeDb.getData('/matches');
-        // const allTimeMatchIndex = allTimeMatches.findIndex(m => m.matchId === matchTimestamp);
-        // if (allTimeMatchIndex !== -1) {
-        //     allTimeMatches[allTimeMatchIndex].breakerId = breakerId;
-        //     await allTimeDb.push('/matches', allTimeMatches);
-        // }
+        // Also update the all-time match record
+        let allTimeMatches = await allTimeDb.getData('/matches');
+        const allTimeMatchIndex = allTimeMatches.findIndex(m => m.timestamp === matchTimestamp);
+        if (allTimeMatchIndex !== -1) {
+            allTimeMatches[allTimeMatchIndex].breakerId = breakerId;
+            await allTimeDb.push('/matches', allTimeMatches);
+        } else {
+             await interaction.reply({ content: 'Could not find the original match in the all-time records to update.', ephemeral: true });
+             return;
+        }
 
-
-        const winnerPlayer = await getPlayer(winnerId, currentSeasonDb) || await getPlayer(winnerId, allTimeDb);
-        const loserPlayer = await getPlayer(loserId, currentSeasonDb) || await getPlayer(loserId, allTimeDb);
-        const breakerPlayerName = breakerId === winnerId ? winnerPlayer.name : loserPlayer.name;
-
+        const breakerPlayer = await getPlayer(breakerId, allTimeDb);
+        const breakerPlayerName = breakerPlayer ? breakerPlayer.name : 'The breaker';
 
         await interaction.update({
-            content: `**Breaker:** ${interaction.user.username} selected **${breakerPlayerName}** as the breaker for match ID ${matchTimestamp.slice(-6)}.`,
+            content: `**Breaker:** ${interaction.user.username} selected **${breakerPlayerName}** as the breaker for the match.`,
             components: []
         });
-
     } catch (error) {
         console.error("Error handling break button interaction:", error);
         await interaction.reply({ content: 'There was an error processing this action.', ephemeral: true });
     }
 });
 
-
-// Login to Discord with your client's token
 client.login(process.env.TOKEN);
+
