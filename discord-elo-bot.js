@@ -296,6 +296,91 @@ async function recordMatch(message, args) {
     message.reply({ embeds: [embed], components: [row], content: '**Breaker:** Select who made the break shot for this match.' });
 }
 
+async function recordAdminMatch(message, args) {
+    // 1. Validate that two users were mentioned
+    if (message.mentions.users.size !== 2) {
+        return message.reply('Please mention exactly two players. Usage: `!pool adminmatch @winner @loser`');
+    }
+    await ensureCurrentSeasonDb();
+
+    // 2. Get the IDs from the mentions. The first mention is the winner, the second is the loser.
+    const mentionedUsers = message.mentions.users.first(2);
+    const winnerId = mentionedUsers[0].id;
+    const loserId = mentionedUsers[1].id;
+
+    if (winnerId === loserId) {
+        return message.reply('The winner and loser cannot be the same person.');
+    }
+
+    // --- The rest of the logic is almost identical to recordMatch ---
+
+    let seasonWinner = await getPlayer(winnerId, currentSeasonDb);
+    let seasonLoser = await getPlayer(loserId, currentSeasonDb);
+    let allTimeWinner = await getPlayer(winnerId, allTimeDb);
+    let allTimeLoser = await getPlayer(loserId, allTimeDb);
+
+    // 3. Updated error messages to be clearer for an admin
+    if (!allTimeWinner) return message.reply(`The winning player (${mentionedUsers[0].username}) needs to be registered first with \`!pool register\`.`);
+    if (!allTimeLoser) return message.reply(`The losing player (${mentionedUsers[1].username}) needs to be registered first with \`!pool register\`.`);
+
+    if (!seasonWinner) {
+        seasonWinner = { id: winnerId, name: allTimeWinner.name, elo: DEFAULT_ELO, wins: 0, losses: 0, matches: [] };
+        await currentSeasonDb.push(`/players/${winnerId}`, seasonWinner);
+        message.channel.send(`Adding ${allTimeWinner.name} to the current season.`);
+    }
+    if (!seasonLoser) {
+        seasonLoser = { id: loserId, name: allTimeLoser.name, elo: DEFAULT_ELO, wins: 0, losses: 0, matches: [] };
+        await currentSeasonDb.push(`/players/${loserId}`, seasonLoser);
+        message.channel.send(`Adding ${allTimeLoser.name} to the current season.`);
+    }
+
+    const matchTimestamp = new Date().toISOString();
+
+    // Seasonal update
+    const seasonalEloResult = calculateElo(seasonWinner.elo, seasonLoser.elo);
+    seasonWinner.elo = seasonalEloResult.newWinnerElo;
+    seasonWinner.wins++;
+    seasonWinner.matches.push({ opponent: loserId, result: 'win', eloChange: seasonalEloResult.winnerGain, timestamp: matchTimestamp });
+    seasonLoser.elo = seasonalEloResult.newLoserElo;
+    seasonLoser.losses++;
+    seasonLoser.matches.push({ opponent: winnerId, result: 'loss', eloChange: -seasonalEloResult.loserLoss, timestamp: matchTimestamp });
+    const seasonalMatchData = { winnerId, loserId, winnerElo: seasonWinner.elo, loserElo: seasonLoser.elo, winnerGain: seasonalEloResult.winnerGain, loserLoss: seasonalEloResult.loserLoss, timestamp: matchTimestamp };
+    await currentSeasonDb.push(`/players/${winnerId}`, seasonWinner);
+    await currentSeasonDb.push(`/players/${loserId}`, seasonLoser);
+    await currentSeasonDb.push('/matches[]', seasonalMatchData, true);
+
+    // All-time update
+    const allTimeEloResult = calculateElo(allTimeWinner.elo, allTimeLoser.elo);
+    allTimeWinner.elo = allTimeEloResult.newWinnerElo;
+    allTimeWinner.wins++;
+    allTimeWinner.matches.push({ opponent: loserId, result: 'win', eloChange: allTimeEloResult.winnerGain, timestamp: matchTimestamp });
+    allTimeLoser.elo = allTimeEloResult.newLoserElo;
+    allTimeLoser.losses++;
+    allTimeLoser.matches.push({ opponent: winnerId, result: 'loss', eloChange: -allTimeEloResult.loserLoss, timestamp: matchTimestamp });
+    const allTimeMatchData = { winnerId, loserId, winnerElo: allTimeWinner.elo, loserElo: allTimeLoser.elo, winnerGain: allTimeEloResult.winnerGain, loserLoss: allTimeEloResult.loserLoss, timestamp: matchTimestamp };
+    await allTimeDb.push(`/players/${winnerId}`, allTimeWinner);
+    await allTimeDb.push(`/players/${loserId}`, allTimeLoser);
+    await allTimeDb.push('/matches[]', allTimeMatchData, true);
+
+    const embed = new EmbedBuilder()
+        .setTitle('Match Result Recorded (Admin)')
+        .setColor('#00FF00')
+        .setDescription(`${message.author.username} recorded a match.`)
+        .addFields(
+            { name: 'Winner', value: `${seasonWinner.name} (Season ELO: ${seasonWinner.elo}, +${seasonalEloResult.winnerGain})`, inline: false },
+            { name: 'Loser', value: `${seasonLoser.name} (Season ELO: ${seasonLoser.elo}, -${seasonalEloResult.loserLoss})`, inline: false },
+            { name: 'All-Time ELOs', value: `${allTimeWinner.name}: ${allTimeWinner.elo} | ${allTimeLoser.name}: ${allTimeLoser.elo}`, inline: false }
+        )
+        .setFooter({ text: 'Office Pool ELO System' });
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`break_${winnerId}_${loserId}_${matchTimestamp}_winner`).setLabel(seasonWinner.name).setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`break_${winnerId}_${loserId}_${matchTimestamp}_loser`).setLabel(seasonLoser.name).setStyle(ButtonStyle.Secondary)
+    );
+
+    message.reply({ embeds: [embed], components: [row], content: '**Breaker:** Select who made the break shot for this match.' });
+}
+
 async function showRankings(message) {
     try {
         await ensureCurrentSeasonDb();
@@ -699,14 +784,15 @@ async function showHelp(message) {
         .addFields(
             { name: '!pool register [name]', value: 'Register yourself as a player (for all-time and current season)', inline: false },
             { name: '!pool match @opponent', value: 'Record that you won a match (updates seasonal and all-time ELO)', inline: false },
+            { name: '!pool adminmatch @winner @loser', value: 'Record a match between two other players', inline: false },
             { name: '!pool undo', value: 'Revert the last recorded match (seasonal & all-time)', inline: false },
             { name: '!pool rankings', value: 'Show current seasonal player rankings', inline: false },
             { name: '!pool alltimerankings', value: 'Show all-time player rankings', inline: false },
             { name: '!pool stats [@player]', value: 'Show your/mentioned player\'s seasonal stats (and all-time ELO)', inline: false },
             { name: '!pool mystats', value: 'Shows your detailed all-time statistics against every opponent.', inline: false },
-	    { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket (uses seasonal ELOs)', inline: false },
+	        { name: '!pool tournament [@player1 @player2...]', value: 'Generate a tournament bracket (uses seasonal ELOs)', inline: false },
             { name: '!pool breakerstats', value: 'Show statistics on how often the breaker wins (all-time)', inline: false },
-	    { name: '!pool help', value: 'Show this help message', inline: false }
+	        { name: '!pool help', value: 'Show this help message', inline: false }
         )
         .setFooter({ text: 'Office Pool ELO System' });
 
@@ -762,6 +848,7 @@ client.on('messageCreate', async message => {
         switch (command) {
             case 'register': await registerPlayer(message, args); break;
             case 'match': await recordMatch(message, args); break;
+            case 'adminmatch': await recordAdminMatch(message, args); break;
             case 'undo': await undoLastMatch(message); break;
             case 'rankings': await showRankings(message); break;
             case 'alltimerankings': await showAllTimeRankings(message); break;
