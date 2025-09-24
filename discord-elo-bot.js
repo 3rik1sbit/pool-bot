@@ -10,7 +10,8 @@ const { JsonDB, Config } = require('node-json-db');
 const { DataError } = require('node-json-db/dist/lib/Errors');
 
 // --- Database Configuration ---
-const ALL_TIME_DB_NAME = "poolEloDatabase";
+const DB_FOLDER = "poolDB";
+const ALL_TIME_DB_NAME = `${DB_FOLDER}/poolEloDatabase`;
 const DEFAULT_ELO = 1000;
 const K_FACTOR = 32;
 
@@ -30,9 +31,9 @@ let currentSeasonDb = null;
 // --- Helper Functions for Seasonal Database ---
 
 function getSeasonDbPath(date = new Date()) {
-    const year = date.getFullYear();
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    return `${ALL_TIME_DB_NAME}_${year}_${month}`;
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    return `${DB_FOLDER}/poolEloDatabase_${year}_${month}`;
 }
 
 async function initializeAllTimeDatabase() {
@@ -396,11 +397,13 @@ async function showRankings(message) {
             return message.reply('No players have recorded any games in the current season yet.');
         }
 
-        const rankedPlayers = activePlayers.sort((a, b) => b.elo - a.elo);
-        const embed = new EmbedBuilder()
-            .setTitle(`Office Pool Rankings (Current Season: ${getSeasonDbPath().split('_').slice(1).join('/')})`)
-            .setColor('#0099FF')
-            .setFooter({ text: 'Office Pool ELO System - Seasonal Rankings' });
+        const rankedPlayers = activePlayers.sort((a, b) => b.elo - a.elo);
+        const currentPath = getSeasonDbPath();
+        const seasonName = currentPath.split('_').slice(1).join('/');
+        const embed = new EmbedBuilder()
+            .setTitle(`Office Pool Rankings (Current Season: ${seasonName})`)
+            .setColor('#0099FF')
+            .setFooter({ text: 'Office Pool ELO System - Seasonal Rankings' });
 
         rankedPlayers.slice(0, 10).forEach((player, index) => {
             embed.addFields({ name: `#${index + 1} ${player.name}`, value: `ELO: ${player.elo} | W: ${player.wins} | L: ${player.losses}`, inline: false });

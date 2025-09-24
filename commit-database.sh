@@ -3,12 +3,13 @@
 # --- Configuration ---
 # !!! IMPORTANT: SET THESE VARIABLES !!!
 GIT_REPO_PATH="/home/erik/Projects/Javascript/pool-bot"  # Absolute path to your local Git repository
-MAIN_DB_FILE="poolEloDatabase.json"                             # Main DB file, relative to repository root
+DB_FOLDER="poolDB"                                      # Directory where database files are stored
+MAIN_DB_FILE="$DB_FOLDER/poolEloDatabase.json"          # Main DB file, relative to repository root
 
 # Dynamically determine the seasonal database file name
 CURRENT_YEAR=$(date +'%Y')
 CURRENT_MONTH=$(date +'%m') # %m gives month as 01-12
-SEASONAL_DB_FILE="poolEloDatabase_${CURRENT_YEAR}_${CURRENT_MONTH}.json" # Seasonal DB file, relative to repo root
+SEASONAL_DB_FILE="$DB_FOLDER/poolEloDatabase_${CURRENT_YEAR}_${CURRENT_MONTH}.json" # Seasonal DB file, relative to repo root
 
 COMMIT_MESSAGE_PREFIX="Automated commit: "
 REMOTE_NAME="origin" # Or your preferred remote name
@@ -95,3 +96,4 @@ else
 fi
 
 exit 0
+
