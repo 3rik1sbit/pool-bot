@@ -297,22 +297,24 @@ async function recordMatch(message, args) {
 }
 
 async function recordAdminMatch(message, args) {
-    // 1. Validate that two users were mentioned
+    
+    // 1. Validate that two *unique* users were mentioned. This check is still correct.
     if (message.mentions.users.size !== 2) {
         return message.reply('Please mention exactly two players. Usage: `!pool adminmatch @winner @loser`');
     }
     await ensureCurrentSeasonDb();
 
-    // 2. Get the IDs from the mentions. The first mention is the winner, the second is the loser.
-    const mentionedUsers = message.mentions.users.first(2);
-    const winnerId = mentionedUsers[0].id;
-    const loserId = mentionedUsers[1].id;
+    // 2. Get the IDs in the correct order by parsing the message content.
+    const mentionRegex = /<@!?(\d+)>/g;
+    const matches = [...message.content.matchAll(mentionRegex)];
+    const orderedMentionIds = matches.map(match => match[1]);
+    
+    const winnerId = orderedMentionIds[0];
+    const loserId = orderedMentionIds[1];
 
     if (winnerId === loserId) {
         return message.reply('The winner and loser cannot be the same person.');
     }
-
-    // --- The rest of the logic is almost identical to recordMatch ---
 
     let seasonWinner = await getPlayer(winnerId, currentSeasonDb);
     let seasonLoser = await getPlayer(loserId, currentSeasonDb);
@@ -320,8 +322,11 @@ async function recordAdminMatch(message, args) {
     let allTimeLoser = await getPlayer(loserId, allTimeDb);
 
     // 3. Updated error messages to be clearer for an admin
-    if (!allTimeWinner) return message.reply(`The winning player (${mentionedUsers[0].username}) needs to be registered first with \`!pool register\`.`);
-    if (!allTimeLoser) return message.reply(`The losing player (${mentionedUsers[1].username}) needs to be registered first with \`!pool register\`.`);
+    // You will also need to get the User objects for their names in the error messages
+    const winnerUser = message.mentions.users.get(winnerId);
+    const loserUser = message.mentions.users.get(loserId);
+    if (!allTimeWinner) return message.reply(`The winning player (${winnerUser.username}) needs to be registered first with \`!pool register\`.`);
+    if (!allTimeLoser) return message.reply(`The losing player (${loserUser.username}) needs to be registered first with \`!pool register\`.`);
 
     if (!seasonWinner) {
         seasonWinner = { id: winnerId, name: allTimeWinner.name, elo: DEFAULT_ELO, wins: 0, losses: 0, matches: [] };
