@@ -1,6 +1,8 @@
 // Office Pool ELO Bot - Logic Service
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const { JsonDB, Config } = require('node-json-db');
 const { DataError } = require('node-json-db/dist/lib/Errors');
 const axios = require('axios');
@@ -480,6 +482,26 @@ app.post('/tournament', async (req, res) => {
     }
 });
 
+app.get('/seasons', (req, res) => {
+    // This now correctly uses the existing DB_FOLDER constant
+    const dbDirectory = path.join(__dirname, DB_FOLDER);
+    const dbFileRegex = /^poolEloDatabase_(\d{4}_\d{2})\.json$/;
+
+    fs.readdir(dbDirectory, (err, files) => {
+        if (err) {
+            console.error("Error reading database directory:", err);
+            return res.status(500).json({ error: 'Unable to scan database directory.' });
+        }
+
+        const seasons = files
+            .map(file => file.match(dbFileRegex))
+            .filter(match => match !== null)
+            .map(match => match[1]);
+
+        seasons.sort().reverse();
+        res.json(seasons);
+    });
+});
 
 // --- Server Start ---
 app.listen(PORT, '0.0.0.0', async () => {
