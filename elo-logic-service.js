@@ -181,16 +181,34 @@ app.post('/match', async (req, res) => {
         timestamp: matchTimestamp
     };
 
-    // --- NEW: Notify Discord Listener ONLY if not from Discord ---
+    // Notify Discord Listener ONLY if not from Discord ---
     if (source !== 'discord') {
         try {
-            await axios.post(NOTIFICATION_URL, responseData);
+       // HELPER: Remove the heavy match history to prevent 413 Payload Too Large errors
+           const clean = (p) => {
+               const { matches, ...rest } = p;
+               return rest;
+            };
+	    // Create a lightweight payload for the notification service
+            const notificationPayload = {
+                seasonalResult: { 
+                    winner: clean(seasonWinner), 
+                    loser: clean(seasonLoser), 
+                    elo: seasonalElo 
+                },
+                allTimeResult: { 
+                    winner: clean(allTimeWinner), 
+                    loser: clean(allTimeLoser), 
+                    elo: allTimeElo 
+                },
+                timestamp: matchTimestamp
+            };
+	    await axios.post(NOTIFICATION_URL, responseData);
             console.log(`Successfully sent notification for match ${matchTimestamp}`);
         } catch (error) {
             console.error(`Failed to send Discord notification for match ${matchTimestamp}. The match was still recorded. Error: ${error.message}`);
         }
     }
-    // --- END NEW ---
 
     res.json(responseData);
 });
