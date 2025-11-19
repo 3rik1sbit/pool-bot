@@ -203,7 +203,7 @@ app.post('/match', async (req, res) => {
                 },
                 timestamp: matchTimestamp
             };
-	    await axios.post(NOTIFICATION_URL, responseData);
+	    await axios.post(NOTIFICATION_URL, notificationPayload);
             console.log(`Successfully sent notification for match ${matchTimestamp}`);
         } catch (error) {
             console.error(`Failed to send Discord notification for match ${matchTimestamp}. The match was still recorded. Error: ${error.message}`);
