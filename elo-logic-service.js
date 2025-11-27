@@ -59,6 +59,25 @@ async function getOrCreatePlayer(leaderboardId, discordUserId, name) {
     return player;
 }
 
+function randomChoice(arr) {
+    if (!arr || arr.length === 0) return "";
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function generateTournamentName() {
+    const prefixes = ["Biljard", "Pool", "Kö", "Kritmagi", "Boll", "Klot", "Spel", "Hål", "Prick", "Rackare", "Klack", "Kant", "Stöt", "Krita", "Triangel", "Grön", "Snooker", "Vall", "Ficka", "Sänk", "Effekt", "Massé", "Vit", "Svart"];
+    const suffixes = ["mästerskapet", "turneringen", "kampen", "utmaningen", "duellen", "spelandet", "striden", "fajten", "tävlingen", "bataljen", "kalaset", "festen", "smällen", "stöten", "bragden", "träffen", "mötet", "drabbningen", "uppgörelsen", "ligan", "cupen", "serien", "racet", "jippot", "spektaklet", "finalen", "derbyt"];
+    const adjectives = ["Kungliga", "Magnifika", "Legendariska", "Otroliga", "Galna", "Vilda", "Episka", "Fantastiska", "Häftiga", "Glada", "Mäktiga", "Snabba", "Precisa", "Strategiska", "Oförglömliga", "Prestigefyllda", "Heta", "Svettiga", "Spännande", "Årliga", "Knivskarpa", "Ostoppbara", "Fruktade", "Ökända", "Hemliga", "Officiella", "Inofficiella", "Kollegiala", "Obarmhärtiga", "Avgörande"];
+    const puns = ["Kö-los Före Resten", "Boll-i-gare Än Andra", "Stöt-ande Bra Spel", "Hål-i-ett Sällskap", "Krit-iskt Bra", "Rack-a Ner På Motståndaren", "Klot-rent Mästerskap", "Kant-astiskt Spel", "Prick-säkra Spelare", "Tri-angel-utmaningen", "Kö-a För Segern", "Boll-virtuoserna", "Grön-saksodlare På Bordet", "Snooker-sväng Med Stil", "Stöt-i-rätt-hålet", "Klack-sparkarnas Kamp", "Krit-a På Näsan", "Rena Sänk-ningen", "Rack-a-rökare", "Helt Vall-galet", "Fick-lampornas Kamp", "Effekt-sökarna", "Värsta Vit-ingarna", "Svart-listade Spelare", "Triangel-dramat", "Krit-erianerna", "Boll-änska Ligan", "Måndags-Massé", "Fredags-Fajten", "Team-Stöten", "Projekt Pool", "Excel-lent Spel", "Kod & Klot", "Kaffe & Krita", "Fika & Fickor", "Vall-öften", "Stöt-tålig Personal", "Inga Sura Miner, Bara Sura Stötar"];
+
+    const nameStyles = [
+        () => `Det ${randomChoice(adjectives)} ${randomChoice(prefixes)}${randomChoice(suffixes)}`,
+        () => `${randomChoice(prefixes)}${randomChoice(suffixes)} ${new Date().getFullYear()}`,
+        () => `${randomChoice(puns)}`,
+    ];
+    return randomChoice(nameStyles)().toUpperCase();
+}
+
 // --- MATH ENGINE ---
 
 function calculateMultiplayerElo(participants) {
@@ -424,6 +443,72 @@ app.post('/undo', async (req, res) => {
         if (!sMatch) return res.status(400).json({ error: "No matches." });
         res.json({ seasonal: { winnerName: "Reverted", loserName: "Match", eloGain: 0 }, allTime: {} });
     } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 9. Generate Tournament Bracket
+app.post('/tournament', async (req, res) => {
+    const { playerIds, leaderboardId } = req.body; // playerIds: Array of DiscordIDs
+
+    try {
+        // Determine System
+        let systemId = leaderboardId;
+        if (!systemId) {
+            const legacy = await prisma.leaderboard.findFirst({ where: { name: ALL_TIME_BOARD_NAME } });
+            systemId = legacy.id;
+        }
+
+        const { allTimeBoard } = await getSystemContext(systemId);
+        const allPlayers = await prisma.player.findMany({ where: { leaderboardId: allTimeBoard.id } });
+
+        // Filter: If IDs provided, use them. Else use everyone with >0 games.
+        let participants = [];
+        if (playerIds && playerIds.length > 0) {
+            participants = allPlayers.filter(p => playerIds.includes(p.discordUserId));
+        } else {
+            participants = allPlayers.filter(p => (p.wins + p.losses) > 0);
+        }
+
+        if (participants.length < 2) return res.status(400).json({ error: 'Not enough players.' });
+
+        // Shuffle
+        for (let i = participants.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [participants[i], participants[j]] = [participants[j], participants[i]];
+        }
+
+        // Bracket Logic
+        const initialPlayerCount = participants.length;
+        const bracketSize = Math.pow(2, Math.ceil(Math.log2(initialPlayerCount)));
+        const byeCount = bracketSize - initialPlayerCount;
+
+        const round1Matches = [];
+        let remainingPlayers = [...participants];
+
+        for (let i = 0; i < bracketSize / 2; i++) {
+            const p1 = remainingPlayers.shift();
+            // If we still have byes to give, p2 is null
+            const p2 = (i < byeCount) ? null : remainingPlayers.shift();
+
+            if (p2) {
+                round1Matches.push({ name: `Match ${i+1}`, value: `**${p1.name}** (${p1.elo}) vs **${p2.name}** (${p2.elo})` });
+            } else {
+                round1Matches.push({ name: `Match ${i+1}`, value: `**${p1.name}** (${p1.elo}) - *Bye to next round*` });
+            }
+        }
+
+        res.json({
+            tournamentName: generateTournamentName(),
+            initialPlayerCount,
+            bracketSize,
+            byeCount,
+            round1Matches,
+            subsequentRoundsText: "Winners play winners. Good luck!"
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // --- STATS ---
