@@ -1,4 +1,4 @@
-// Office Pool ELO Bot - Logic Service (Universal + Multi-Mode + Starter)
+// Office Pool ELO Bot - Logic Service (Universal + Multi-Mode + Starter + Fixed Discord)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -10,7 +10,7 @@ const PORT = 3005;
 const DEFAULT_ELO = 1000;
 const K_FACTOR = 32;
 const NOTIFICATION_URL = 'http://localhost:3006/notify/match-recorded';
-const ALL_TIME_BOARD_NAME = "Office Pool (Legacy)"; 
+const ALL_TIME_BOARD_NAME = "Office Pool (Legacy)";
 
 const app = express();
 const prisma = new PrismaClient();
@@ -36,8 +36,8 @@ async function getSystemContext(allTimeBoardId) {
 
     if (!seasonBoard) {
         seasonBoard = await prisma.leaderboard.create({
-            data: { 
-                name: seasonName, 
+            data: {
+                name: seasonName,
                 gameType: allTimeBoard.gameType,
                 scoringType: allTimeBoard.scoringType,
                 trackStarter: allTimeBoard.trackStarter
@@ -62,10 +62,6 @@ async function getOrCreatePlayer(leaderboardId, discordUserId, name) {
 // --- MATH ENGINE ---
 
 function calculateMultiplayerElo(participants) {
-    // participants: [{ id, elo, rank, team }]
-    // rank: 1=1st, 2=2nd... Teams share ranks.
-    
-    // 1. Group by Team
     const teams = {};
     participants.forEach(p => {
         const teamKey = p.team !== undefined ? p.team : p.id;
@@ -81,8 +77,7 @@ function calculateMultiplayerElo(participants) {
         eloChange: 0
     }));
 
-    // 2. Pairwise Calculations
-    const normalizedK = K_FACTOR / (teamStats.length - 1 || 1); 
+    const normalizedK = K_FACTOR / (teamStats.length - 1 || 1);
 
     for (let i = 0; i < teamStats.length; i++) {
         for (let j = i + 1; j < teamStats.length; j++) {
@@ -90,20 +85,19 @@ function calculateMultiplayerElo(participants) {
             const teamB = teamStats[j];
 
             const expectedA = 1 / (1 + Math.pow(10, (teamB.avgElo - teamA.avgElo) / 400));
-            
+
             let actualA;
-            if (teamA.rank < teamB.rank) actualA = 1;      // A beat B
-            else if (teamA.rank > teamB.rank) actualA = 0; // A lost to B
-            else actualA = 0.5;                            // Draw
+            if (teamA.rank < teamB.rank) actualA = 1;
+            else if (teamA.rank > teamB.rank) actualA = 0;
+            else actualA = 0.5;
 
             const change = normalizedK * (actualA - expectedA);
-            
+
             teamA.eloChange += change;
             teamB.eloChange -= change;
         }
     }
 
-    // 3. Distribute
     const playerChanges = {};
     teamStats.forEach(t => {
         teams[t.id].members.forEach(p => {
@@ -121,7 +115,7 @@ app.post('/leaderboard', async (req, res) => {
     if (!name) return res.status(400).json({ error: 'Name required.' });
 
     try {
-        const gameTypeUUID = `game_${Date.now()}`; 
+        const gameTypeUUID = `game_${Date.now()}`;
         const allTimeBoard = await prisma.leaderboard.create({
             data: {
                 name: `${name} (All-Time)`,
@@ -130,7 +124,7 @@ app.post('/leaderboard', async (req, res) => {
                 trackStarter: trackStarter !== undefined ? trackStarter : true
             }
         });
-        await getSystemContext(allTimeBoard.id); // Init season
+        await getSystemContext(allTimeBoard.id);
         res.json(allTimeBoard);
     } catch (error) { res.status(500).json({ error: 'Failed to create system.' }); }
 });
@@ -151,12 +145,13 @@ app.get('/leaderboard/:id/seasons', async (req, res) => {
     try {
         const rootBoard = await prisma.leaderboard.findUnique({ where: { id } });
         if(!rootBoard) return res.status(404).json({error: "Board not found"});
-        
+
         const boards = await prisma.leaderboard.findMany({
             where: { gameType: rootBoard.gameType }, orderBy: { createdAt: 'desc' }
         });
-        
-        const allTime = boards.find(b => b.id === id || b.name.includes("(All-Time)") || b.name.includes("(Legacy)"));
+
+        // Strict check for All-Time naming convention
+        const allTime = boards.find(b => b.name.includes("(All-Time)") || b.name.includes("(Legacy)"));
         const seasons = boards.filter(b => b.id !== allTime?.id);
         res.json({ allTime, seasons });
     } catch(e) { res.status(500).json({error: e.message}); }
@@ -165,11 +160,9 @@ app.get('/leaderboard/:id/seasons', async (req, res) => {
 app.get('/leaderboard/:id', async (req, res) => {
     const { id } = req.params;
     try {
-        // Fetch Board Config
         const board = await prisma.leaderboard.findUnique({ where: { id } });
         const players = await prisma.player.findMany({ where: { leaderboardId: id }, orderBy: { elo: 'desc' } });
-        
-        // Include participants to support multi-player display
+
         const matches = await prisma.match.findMany({
             where: { leaderboardId: id },
             orderBy: { timestamp: 'desc' },
@@ -180,11 +173,10 @@ app.get('/leaderboard/:id', async (req, res) => {
         const getStarterName = (starterId) => {
             if (!starterId) return null;
             const p = players.find(p => p.id === starterId);
-            return p ? p.discordUserId : null; 
+            return p ? p.discordUserId : null;
         };
 
         const formattedMatches = matches.map(m => {
-            // Fallback for legacy 1v1 or standard view
             if (m.winnerId && m.loserId) {
                 return {
                     winnerId: m.winner?.discordUserId,
@@ -193,10 +185,9 @@ app.get('/leaderboard/:id', async (req, res) => {
                     loserLoss: m.eloChange,
                     timestamp: m.timestamp,
                     result: 'win',
-                    starterId: getStarterName(m.starterId) // Updated to starterId
+                    starterId: getStarterName(m.starterId)
                 };
             } else {
-                // Multi-player format
                 return {
                     timestamp: m.timestamp,
                     isMulti: true,
@@ -212,14 +203,14 @@ app.get('/leaderboard/:id', async (req, res) => {
         });
 
         const playerMap = {};
-        players.forEach(p => playerMap[p.discordUserId] = { 
-            id: p.discordUserId, internalId: p.id, name: p.name, elo: p.elo, wins: p.wins, losses: p.losses 
+        players.forEach(p => playerMap[p.discordUserId] = {
+            id: p.discordUserId, internalId: p.id, name: p.name, elo: p.elo, wins: p.wins, losses: p.losses
         });
 
-        res.json({ 
-            board: { trackStarter: board.trackStarter, scoringType: board.scoringType }, // Send config
-            players: playerMap, 
-            matches: formattedMatches 
+        res.json({
+            board: { trackStarter: board.trackStarter, scoringType: board.scoringType },
+            players: playerMap,
+            matches: formattedMatches
         });
     } catch (error) { console.error(error); res.status(500).json({ error: 'Failed.' }); }
 });
@@ -229,13 +220,13 @@ app.post('/leaderboard/:id/player', async (req, res) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: "Name required" });
     try {
-        const webId = `web_${Date.now()}`; 
+        const webId = `web_${Date.now()}`;
         const newPlayer = await prisma.player.create({ data: { leaderboardId: id, discordUserId: webId, name, elo: DEFAULT_ELO } });
         res.json(newPlayer);
     } catch (error) { res.status(500).json({ error: "Failed." }); }
 });
 
-// --- MATCH RECORDING (UNIVERSAL) ---
+// --- MATCH RECORDING ---
 app.post('/match', async (req, res) => {
     const { winnerId, loserId, participants, source, leaderboardId } = req.body;
 
@@ -247,27 +238,24 @@ app.post('/match', async (req, res) => {
         }
 
         const { allTimeBoard, seasonBoard } = await getSystemContext(systemId);
-        
-        // FIX 1: Generate timestamp ONCE so both boards match perfectly
-        const matchTimestamp = new Date(); 
+        const matchTimestamp = new Date(); // Sync Timestamp
 
-        // 1. Convert inputs to participants array
         let inputParticipants = [];
         if (participants) {
             inputParticipants = participants;
         } else if (winnerId && loserId) {
             if (winnerId === loserId) return res.status(400).json({ error: 'Same player.' });
             inputParticipants = [ { id: winnerId, rank: 1, team: 1 }, { id: loserId, rank: 2, team: 2 } ];
+        } else {
+            return res.status(400).json({ error: "Invalid match data" });
         }
 
-        // 2. Process Function
         const processBoard = async (board) => {
             const playerObjects = [];
-            
-            // Resolve Players
+
             for (const p of inputParticipants) {
                 let dbPlayer = await prisma.player.findFirst({ where: { leaderboardId: board.id, discordUserId: p.id } });
-                
+
                 if (!dbPlayer && board.id === seasonBoard.id) {
                     const atPlayer = await prisma.player.findFirst({ where: { leaderboardId: allTimeBoard.id, discordUserId: p.id } });
                     if (atPlayer) dbPlayer = await getOrCreatePlayer(board.id, p.id, atPlayer.name);
@@ -280,36 +268,74 @@ app.post('/match', async (req, res) => {
             const eloChanges = calculateMultiplayerElo(mathInput);
 
             const participantRecords = [];
+            const updatedPlayersMap = {};
+
             for (const p of playerObjects) {
                 const change = eloChanges[p.id];
                 const isWin = p.rank === 1;
-                await prisma.player.update({
+
+                const updatedP = await prisma.player.update({
                     where: { id: p.id },
                     data: { elo: p.elo + change, wins: isWin ? { increment: 1 } : undefined, losses: !isWin ? { increment: 1 } : undefined }
                 });
+                updatedPlayersMap[p.id] = updatedP;
+
                 participantRecords.push({ playerId: p.id, rank: p.rank, startElo: p.elo, eloChange: change });
             }
+
+            const p1 = playerObjects.find(p => p.rank === 1);
+            const p2 = playerObjects.find(p => p.rank === 2);
+            const is1v1 = inputParticipants.length === 2 && p1 && p2;
 
             const match = await prisma.match.create({
                 data: {
                     leaderboardId: board.id,
-                    timestamp: matchTimestamp, // FIX 1: Use the shared timestamp
-                    winnerId: inputParticipants.length === 2 ? playerObjects.find(p => p.rank===1).id : null,
-                    loserId: inputParticipants.length === 2 ? playerObjects.find(p => p.rank===2).id : null,
-                    winnerElo: inputParticipants.length === 2 ? playerObjects.find(p => p.rank===1).elo + eloChanges[playerObjects.find(p => p.rank===1).id] : null,
-                    loserElo: inputParticipants.length === 2 ? playerObjects.find(p => p.rank===2).elo + eloChanges[playerObjects.find(p => p.rank===2).id] : null,
-                    eloChange: inputParticipants.length === 2 ? Math.abs(eloChanges[playerObjects.find(p => p.rank===1).id]) : 0,
+                    timestamp: matchTimestamp,
+                    winnerId: is1v1 ? p1.id : null,
+                    loserId: is1v1 ? p2.id : null,
+                    winnerElo: is1v1 ? updatedPlayersMap[p1.id].elo : null,
+                    loserElo: is1v1 ? updatedPlayersMap[p2.id].elo : null,
+                    eloChange: is1v1 ? Math.abs(eloChanges[p1.id]) : 0,
                     participants: { create: participantRecords }
                 }
             });
-            return { match };
+
+            if (is1v1) {
+                return {
+                    is1v1: true,
+                    match,
+                    result: {
+                        winner: updatedPlayersMap[p1.id],
+                        loser: updatedPlayersMap[p2.id],
+                        elo: { winnerGain: eloChanges[p1.id], loserLoss: Math.abs(eloChanges[p2.id]) }
+                    }
+                };
+            }
+            return { is1v1: false, match };
         };
 
-        const result = await processBoard(seasonBoard);
-        await processBoard(allTimeBoard);
+        const sResult = await processBoard(seasonBoard);
+        const atResult = await processBoard(allTimeBoard);
 
-        if (source !== 'discord' && allTimeBoard.discordChannelId && inputParticipants.length === 2) {
-             // (Keep notification logic)
+        // DISCORD & NOTIFICATION FIX
+        if (sResult.is1v1 && atResult.is1v1) {
+            const responseData = {
+                seasonalResult: sResult.result,
+                allTimeResult: atResult.result,
+                timestamp: matchTimestamp.toISOString()
+            };
+
+            if (source !== 'discord' && allTimeBoard.discordChannelId) {
+                const clean = (p) => { const { matches, wonMatches, lostMatches, participations, ...rest } = p; return rest; };
+                const payload = {
+                    seasonalResult: { ...responseData.seasonalResult, winner: clean(responseData.seasonalResult.winner), loser: clean(responseData.seasonalResult.loser) },
+                    allTimeResult: { ...responseData.allTimeResult, winner: clean(responseData.allTimeResult.winner), loser: clean(responseData.allTimeResult.loser) },
+                    timestamp: responseData.timestamp,
+                    targetChannelId: allTimeBoard.discordChannelId
+                };
+                axios.post(NOTIFICATION_URL, payload).catch(e => console.error(`Notify failed: ${e.message}`));
+            }
+            return res.json(responseData);
         }
 
         res.json({ message: "Recorded", timestamp: matchTimestamp.toISOString() });
@@ -317,28 +343,24 @@ app.post('/match', async (req, res) => {
     } catch (error) { console.error(error); res.status(500).json({ error: error.message }); }
 });
 
-// 7. Set Starter (Universal)
+// 7. Set Starter
 app.post('/match/starter', async (req, res) => {
-    // FIX 2: Accept leaderboardId
     const { matchTimestamp, starterId, leaderboardId } = req.body;
     if (!matchTimestamp || !starterId) return res.status(400).json({ error: 'Missing data.' });
 
     try {
         let systemId = leaderboardId;
-
-        // Default to Legacy Pool if unknown (for Discord)
         if (!systemId) {
             const legacy = await prisma.leaderboard.findFirst({ where: { name: ALL_TIME_BOARD_NAME } });
             systemId = legacy.id;
         }
 
         const { allTimeBoard, seasonBoard } = await getSystemContext(systemId);
-
+        // Wider Window
         const targetTime = new Date(matchTimestamp).getTime();
-        const windowStart = new Date(targetTime - 1000);
-        const windowEnd = new Date(targetTime + 1000);
+        const windowStart = new Date(targetTime - 2000);
+        const windowEnd = new Date(targetTime + 2000);
 
-        // Update All-Time
         const atStarter = await prisma.player.findFirst({ where: { leaderboardId: allTimeBoard.id, discordUserId: starterId } });
         let found = false;
         if (atStarter) {
@@ -346,7 +368,6 @@ app.post('/match/starter', async (req, res) => {
             if (m) { await prisma.match.update({ where: { id: m.id }, data: { starterId: atStarter.id } }); found = true; }
         }
 
-        // Update Season
         const sStarter = await prisma.player.findFirst({ where: { leaderboardId: seasonBoard.id, discordUserId: starterId } });
         if (sStarter) {
             const m = await prisma.match.findFirst({ where: { leaderboardId: seasonBoard.id, timestamp: { gte: windowStart, lte: windowEnd } } });
@@ -354,26 +375,19 @@ app.post('/match/starter', async (req, res) => {
         }
 
         if (found) return res.json({ message: 'Recorded.' });
-
         res.status(404).json({ error: 'Match not found.' });
-
     } catch (e) { res.status(500).json({ error: 'Failed.' }); }
 });
 
-// 8. Undo (Universal - Context Aware)
+// 8. Undo
 app.post('/undo', async (req, res) => {
-    const { leaderboardId } = req.body; // <--- Accept the ID
-
+    const { leaderboardId } = req.body;
     try {
         let systemId = leaderboardId;
-
-        // Default to Legacy Pool if no ID provided (for Discord compatibility)
         if (!systemId) {
             const legacy = await prisma.leaderboard.findFirst({ where: { name: ALL_TIME_BOARD_NAME } });
             systemId = legacy.id;
         }
-
-        // Use the helper to get the correct All-Time and Season boards for this system
         const { allTimeBoard, seasonBoard } = await getSystemContext(systemId);
 
         const undoLastMatch = async (boardId) => {
@@ -396,7 +410,6 @@ app.post('/undo', async (req, res) => {
                     });
                 }
             } else {
-                // Legacy fallback
                 const amount = lastMatch.eloChange || 0;
                 await prisma.player.update({ where: { id: lastMatch.winnerId }, data: { elo: { decrement: amount }, wins: { decrement: 1 } } });
                 await prisma.player.update({ where: { id: lastMatch.loserId }, data: { elo: { increment: amount }, losses: { decrement: 1 } } });
@@ -408,12 +421,12 @@ app.post('/undo', async (req, res) => {
         const sMatch = await undoLastMatch(seasonBoard.id);
         await undoLastMatch(allTimeBoard.id);
 
-        if (!sMatch) return res.status(400).json({ error: "No matches to undo in this system." });
+        if (!sMatch) return res.status(400).json({ error: "No matches." });
         res.json({ seasonal: { winnerName: "Reverted", loserName: "Match", eloGain: 0 }, allTime: {} });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- ROBUST PLAYER STATS (With Starter Win %) ---
+// --- STATS ---
 app.get('/leaderboard/:boardId/player/:playerId', async (req, res) => {
     const { boardId, playerId } = req.params;
     try {
@@ -421,32 +434,19 @@ app.get('/leaderboard/:boardId/player/:playerId', async (req, res) => {
         if (!player) return res.status(404).json({ error: 'Player not found.' });
 
         const matches = await prisma.match.findMany({
-            where: { 
-                leaderboardId: boardId, 
-                OR: [ { winnerId: player.id }, { loserId: player.id } ] 
-            },
-            orderBy: { timestamp: 'asc' },
-            include: { winner: true, loser: true }
+            where: { leaderboardId: boardId, OR: [ { winnerId: player.id }, { loserId: player.id } ] },
+            orderBy: { timestamp: 'asc' }, include: { winner: true, loser: true }
         });
 
-        // --- STATS VARIABLES ---
         let netChange = 0;
-        let starts = 0;      // Total times they started
-        let winsOnStart = 0; // Total times they won when they started
+        let starts = 0; let winsOnStart = 0;
 
         const cleanHistory = matches.map(m => {
-            if (!m.winner || !m.loser) return null; 
-
+            if (!m.winner || !m.loser) return null;
             const isWin = m.winnerId === player.id;
             const change = isWin ? m.eloChange : -m.eloChange;
             netChange += change;
-
-            // --- NEW: Starter Calculation ---
-            if (m.starterId === player.id) {
-                starts++;
-                if (isWin) winsOnStart++;
-            }
-
+            if (m.starterId === player.id) { starts++; if (isWin) winsOnStart++; }
             return {
                 timestamp: m.timestamp,
                 eloChange: change,
@@ -455,17 +455,11 @@ app.get('/leaderboard/:boardId/player/:playerId', async (req, res) => {
             };
         }).filter(m => m !== null);
 
-        // Calculate Starter Win Rate
         const starterWinRate = starts > 0 ? Math.round((winsOnStart / starts) * 100) : 0;
-
-        // --- STANDARD ELO REPLAY ---
         let runningElo = player.elo - netChange;
-        let highestElo = runningElo;
-        let lowestElo = runningElo;
-        let currentStreak = 0;
-        let streakType = null;
-        const opponents = {};
-        const graphData = [];
+        let highestElo = runningElo; let lowestElo = runningElo;
+        let currentStreak = 0; let streakType = null;
+        const opponents = {}; const graphData = [];
 
         for (const event of cleanHistory) {
             runningElo += event.eloChange;
@@ -476,7 +470,7 @@ app.get('/leaderboard/:boardId/player/:playerId', async (req, res) => {
                 timestamp: event.timestamp,
                 eloChange: event.eloChange,
                 result: event.result,
-		opponentName: event.opponent.name
+                opponentName: event.opponent.name
             });
 
             if (streakType === event.result) currentStreak++;
@@ -487,7 +481,6 @@ app.get('/leaderboard/:boardId/player/:playerId', async (req, res) => {
             if (event.result === 'win') opponents[oppId].wins++; else opponents[oppId].losses++;
         }
 
-        // --- RIVALS CALCULATION ---
         let nemesis = null; let favorite = null;
         let maxLossRate = -1; let maxWinRate = -1;
         const MIN_GAMES = 5;
@@ -496,7 +489,6 @@ app.get('/leaderboard/:boardId/player/:playerId', async (req, res) => {
             const total = opp.wins + opp.losses;
             const winRate = opp.wins / total;
             const lossRate = opp.losses / total;
-
             if (total >= MIN_GAMES) {
                 if (winRate > maxWinRate) { maxWinRate = winRate; favorite = `${opp.name} (${Math.round(winRate*100)}%)`; }
                 if (lossRate > maxLossRate) { maxLossRate = lossRate; nemesis = `${opp.name} (${Math.round(lossRate*100)}%)`; }
@@ -506,23 +498,18 @@ app.get('/leaderboard/:boardId/player/:playerId', async (req, res) => {
         if (!nemesis) Object.values(opponents).forEach(o => { if(o.losses > maxLossRate) { maxLossRate=o.losses; nemesis=`${o.name} (${o.losses} L)`; } });
         if (!favorite) Object.values(opponents).forEach(o => { if(o.wins > maxWinRate) { maxWinRate=o.wins; favorite=`${o.name} (${o.wins} W)`; } });
 
-        res.json({ 
-            history: graphData, 
+        res.json({
+            history: graphData,
             currentElo: player.elo,
             stats: {
-                peakElo: highestElo,
-                lowestElo: lowestElo,
+                peakElo: highestElo, lowestElo,
                 currentStreak: currentStreak > 0 ? `${currentStreak} ${streakType === 'win' ? 'W' : 'L'}` : '0',
                 totalGames: cleanHistory.length,
                 winRate: cleanHistory.length > 0 ? Math.round((player.wins / cleanHistory.length) * 100) : 0,
-                nemesis: nemesis || 'None',
-                favorite: favorite || 'None',
-                // NEW FIELDS
-                starterWinRate: `${starterWinRate}%`,
-                startsCount: starts
+                nemesis: nemesis || 'None', favorite: favorite || 'None',
+                starterWinRate: `${starterWinRate}%`, startsCount: starts
             }
         });
-
     } catch (e) { console.error(e); res.status(500).json({ error: 'Failed.' }); }
 });
 
@@ -556,13 +543,34 @@ app.get('/stats/starter', async (req, res) => {
             return { name: playerMap[k] || '?', timesStarted: t, totalGames: g, percentage: g > 0 ? (t/g)*100 : 0 };
         }).sort((a,b) => b.percentage - a.percentage);
 
-        res.json({ 
-            totalMatchesWithStarterInfo: totalMatches, 
-            starterWins, 
-            overallStarterWinPercentage: overallWin, 
-            statsArray: stats 
+        res.json({
+            totalMatchesWithStarterInfo: totalMatches,
+            starterWins,
+            overallStarterWinPercentage: overallWin,
+            statsArray: stats
         });
     } catch (error) { res.status(500).json({ error: 'Failed.' }); }
+});
+
+app.get('/stats/mystats/:playerId', async (req, res) => {
+    const { playerId } = req.params;
+    try {
+        const legacy = await prisma.leaderboard.findFirst({ where: { name: ALL_TIME_BOARD_NAME } });
+        const player = await prisma.player.findFirst({ where: { leaderboardId: legacy.id, discordUserId: playerId } });
+        if (!player) return res.status(404).json({ error: 'Player not found.' });
+        const matches = await prisma.match.findMany({ where: { leaderboardId: legacy.id, OR: [{ winnerId: player.id }, { loserId: player.id }] }, include: { winner: true, loser: true } });
+        const totalGames = player.wins + player.losses;
+        const overallWinPercentage = totalGames > 0 ? ((player.wins / totalGames) * 100).toFixed(2) : 0;
+        const opponentStats = {};
+        matches.forEach(m => {
+            const isWin = m.winnerId === player.id;
+            const opponent = isWin ? m.loser : m.winner;
+            if (!opponentStats[opponent.discordUserId]) { opponentStats[opponent.discordUserId] = { name: opponent.name, wins: 0, losses: 0 }; }
+            if (isWin) opponentStats[opponent.discordUserId].wins++; else opponentStats[opponent.discordUserId].losses++;
+        });
+        const opponentStatsDescription = Object.values(opponentStats).sort((a, b) => (b.wins + b.losses) - (a.wins + a.losses)).map(s => `vs **${s.name}**: ${s.wins}W / ${s.losses}L (${((s.wins / (s.wins + s.losses)) * 100).toFixed(0)}%)`).join('\n');
+        res.json({ player, overallWinPercentage, opponentStatsDescription });
+    } catch (error) { console.error(error); res.status(500).json({ error: 'Failed.' }); }
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Logic Service running on ${PORT}`));

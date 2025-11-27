@@ -99,7 +99,7 @@
 
 <script>
     let API_URL;
-            
+
         // 1. Local Development (Double-clicking file)
         if (window.location.protocol === 'file:') {
             API_URL = 'http://localhost:3005';
@@ -442,13 +442,25 @@
         }
 
         async function addNewPlayer() {
-            if(!currentSystemId) return;
+            // FIX: Ensure we use the SYSTEM ID (All-Time), not the current view
+            if(!currentSystemId) return alert("No system loaded.");
+
             const name = prompt("Name:");
             if(!name) return;
-            await fetch(`${API_URL}/leaderboard/${currentSystemId}/player`, {
-                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})
-            });
-            loadGameSystem(currentSystemId);
+
+            try {
+                // Always create player in the All-Time board first
+                await fetch(`${API_URL}/leaderboard/${currentSystemId}/player`, {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({name})
+                });
+
+                // Refresh the current view (dropdowns will update because we fetch from All-Time)
+                loadBoardData(currentBoardId);
+            } catch(e) {
+                alert(e.message);
+            }
         }
 
         // --- DISPLAY LOGIC ---
