@@ -15,6 +15,9 @@ prisma/*.db
 prisma/dev.db.backup*
 poolDB.bak/
 
+# Allow the backup file
+!pool_backup.sql
+
 # --- Logs & generated files ---
 *.log
 *.csv
