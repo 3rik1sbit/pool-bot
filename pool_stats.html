@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Office ELO</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .season-btn, #older-seasons-select { background-color: #374151; color: white; border: none; }
+        .season-btn.active, #older-seasons-select.active { background-color: #10B981; color: white; }
+        .season-btn:focus, #older-seasons-select:focus { outline: 2px solid #10B981; outline-offset: 2px; }
+        #older-seasons-select { background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239CA3AF' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e"); background-position: right 0.5rem center; background-repeat: no-repeat; background-size: 1.5em 1.5em; padding-right: 2.5rem; -webkit-appearance: none; }
+    </style>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body class="bg-gray-900 text-gray-200">
+    <div class="container mx-auto p-4 max-w-7xl">
+        <header class="mb-6">
+            <h1 class="text-4xl font-bold text-white text-center mb-2">Office ELO Rankings</h1>
+            
+            <div class="text-center mb-4">
+                <h2 id="system-title" class="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">
+                    Loading...
+                </h2>
+                <p id="view-subtitle" class="text-gray-400 text-xs uppercase tracking-widest mt-1 font-semibold">
+                    ...
+                </p>
+            </div>
+
+            <div class="flex flex-col md:flex-row justify-center items-center gap-4 bg-gray-800 p-3 rounded-lg">
+                <div id="season-selector" class="flex flex-wrap justify-center items-center gap-2">
+                    <p class="text-gray-400">Loading System...</p>
+                </div>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+            <div class="lg:col-span-1 flex flex-col gap-6">
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 id="lb-title" class="text-2xl font-semibold text-white">Leaderboard</h2>
+                        <button onclick="toggleLeaderboardView()" id="lb-toggle-btn" class="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded border border-gray-600 transition-colors">
+                            Show Starter Stats
+                        </button>
+                    </div>
+                    <div id="leaderboard" class="space-y-2 max-h-[60vh] overflow-y-auto pr-2"><p class="text-gray-400">Loading...</p></div>
+                    <div id="starter-stats" class="space-y-2 max-h-[60vh] overflow-y-auto pr-2 hidden"></div>
+                </div>
+
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-semibold text-white">Record Match</h2>
+                        <button onclick="addNewPlayer()" class="text-xs bg-gray-700 hover:bg-gray-600 text-emerald-400 px-2 py-1 rounded border border-gray-600 transition-colors">
+                            + Add Player
+                        </button>
+                    </div>
+                    
+                    <form id="record-match-form" class="space-y-4">
+                        <div id="dynamic-form-fields">
+                            </div>
+
+                        <div id="starter-container" class="hidden">
+                            <label for="starter" class="block text-sm font-medium text-gray-300">Who Started?</label>
+                            <select id="starter" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded text-white p-2"></select>
+                        </div>
+
+                        <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded">Record Match</button>
+                    </form>
+
+                    <div class="mt-4 pt-4 border-t border-gray-700">
+                        <button id="undo-btn" class="w-full bg-gray-700 hover:bg-red-900 text-gray-400 py-2 px-4 rounded text-sm">Revert Last Match</button>
+                    </div>
+                    <div id="match-status" class="mt-3 text-center text-sm"></div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2 bg-gray-800 p-4 rounded-lg shadow-lg">
+                
+                <div id="player-details" class="hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 id="details-title" class="text-3xl font-bold text-white">Player Details</h2>
+                        <button onclick="closePlayerDetails()" class="text-gray-400 hover:text-white text-sm">Close</button>
+                    </div>
+                    <div class="h-64 md:h-80 mb-6 bg-gray-900 rounded p-2">
+                        <canvas id="elo-chart"></canvas>
+                    </div>
+                    <div id="extended-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+                    <h3 class="text-xl font-semibold text-white mb-2">Match History</h3>
+                    <div id="match-history" class="space-y-2 max-h-60 overflow-y-auto pr-2"></div>
+                </div>
+
+                <div id="recent-matches-container">
+                    <h2 class="text-3xl font-bold text-white mb-4">Recent Matches</h2>
+                    <div id="recent-matches-list" class="space-y-2"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}`;
+        const API_URL = window.location.protocol === 'https:' ? `${API_BASE_URL}/pool-api` : `${API_BASE_URL}:3005`;
+        
+        let chartInstance = null;
+        let currentBoardId = null;
+        let currentSystemId = null;
+        let currentConfig = { trackStarter: true, scoringType: '1v1' };
+        let systemPlayers = [];
+        let currentSystemBoards = [];
+
+        // --- HELPER FUNCTIONS ---
+        function clearContent() {
+            document.getElementById('leaderboard').innerHTML = '<p class="text-gray-400">Loading...</p>';
+            document.getElementById('recent-matches-list').innerHTML = '';
+            closePlayerDetails();
+        }
+        function closePlayerDetails() {
+            document.getElementById('player-details').classList.add('hidden');
+            document.getElementById('recent-matches-container').classList.remove('hidden');
+        }
+        function updateUrl(systemId) {
+            if (!systemId) return;
+            const newUrl = `${window.location.pathname}?board=${systemId}`;
+            window.history.pushState({ path: newUrl }, '', newUrl);
+        }
+
+        async function initApp(targetIdOverride) {
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                
+                // Priority: 1. Override (New Board) -> 2. URL Param -> 3. Legacy Default
+                let targetSystemId = targetIdOverride || urlParams.get('board');
+
+                if (!targetSystemId) {
+                    const response = await fetch(`${API_URL}/leaderboards`);
+                    const boards = await response.json();
+                    const legacy = boards.find(b => b.isLegacy);
+                    if (legacy) targetSystemId = legacy.id;
+                }
+
+                if (targetSystemId) {
+                    await loadGameSystem(targetSystemId);
+                } else {
+                    document.getElementById('season-selector').innerHTML = '<p>No boards found.</p>';
+                }
+            } catch (e) { 
+                console.error(e);
+                // alert("Failed to initialize."); // Optional: silence this alert to be less annoying
+            }
+        }
+
+        async function loadGameSystem(systemId) {
+            currentSystemId = systemId;
+            updateUrl(systemId);
+            const container = document.getElementById('season-selector');
+            container.innerHTML = 'Loading...';
+
+            try {
+                const res = await fetch(`${API_URL}/leaderboard/${systemId}/seasons`);
+                const { allTime, seasons } = await res.json();
+                currentSystemBoards = [allTime, ...seasons];
+
+                // Set Title
+                const systemName = allTime.name.replace(" (All-Time)", "").replace(" (Legacy)", "");
+                document.getElementById('system-title').textContent = systemName;
+
+                // Load Master List
+                fetch(`${API_URL}/leaderboard/${allTime.id}`).then(r=>r.json()).then(d => {
+                    systemPlayers = Object.values(d.players);
+                    // Only render form now that we have players
+                    renderMatchForm(); 
+                });
+
+                container.innerHTML = '';
+                
+                const createBtn = (txt, id, style) => {
+                    const b = document.createElement('button');
+                    b.textContent = txt; b.dataset.id = id; b.onclick = () => loadBoardData(id);
+                    b.className = style || 'season-btn px-4 py-2 rounded text-sm font-medium transition-colors';
+                    container.appendChild(b);
+                };
+
+                createBtn("🏆 All-Time", allTime.id, 'season-btn px-4 py-2 rounded text-sm font-medium bg-blue-900 hover:bg-blue-700 border border-blue-800');
+                seasons.slice(0, 3).forEach(s => createBtn(s.name.split(' ').slice(1).join(' ') || s.name, s.id));
+
+                if (seasons.length > 3) {
+                    const sel = document.createElement('select');
+                    sel.id = 'older-seasons-select';
+                    sel.className = 'season-btn px-4 py-2 rounded text-sm font-medium';
+                    sel.add(new Option('Older...', ''));
+                    seasons.slice(3).forEach(s => sel.add(new Option(s.name.split(' ').slice(1).join(' '), s.id)));
+                    sel.onchange = (e) => { if(e.target.value) loadBoardData(e.target.value); };
+                    container.appendChild(sel);
+                }
+
+                const sep = document.createElement('div'); sep.className = 'h-6 w-px bg-gray-600 mx-2 hidden md:block'; container.appendChild(sep);
+                const newBtn = document.createElement('button');
+                newBtn.textContent = "+ New Game"; newBtn.onclick = createNewBoard;
+                newBtn.className = 'season-btn px-3 py-2 rounded text-xs font-bold bg-emerald-700 hover:bg-emerald-600';
+                container.appendChild(newBtn);
+
+                loadBoardData(seasons.length > 0 ? seasons[0].id : allTime.id);
+            } catch(e) { console.error(e); }
+        }
+
+        async function loadBoardData(id) {
+            currentBoardId = id;
+            clearContent();
+            
+            // Set Subtitle
+            const boardObj = currentSystemBoards.find(b => b.id === id);
+            if (boardObj) {
+                let subTitle = boardObj.name.includes("All-Time") || boardObj.name.includes("Legacy") 
+                    ? "All-Time Records" : boardObj.name.split(' ').slice(1).join(' ');
+                document.getElementById('view-subtitle').textContent = subTitle;
+            }
+
+            document.querySelectorAll('.season-btn, #older-seasons-select').forEach(el => el.classList.remove('active'));
+            const btn = document.querySelector(`.season-btn[data-id="${id}"]`);
+            if (btn) btn.classList.add('active');
+
+            const res = await fetch(`${API_URL}/leaderboard/${id}`);
+            const data = await res.json();
+            currentConfig = data.board; 
+
+            const players = Object.values(data.players);
+            displayLeaderboard(players);
+            showRecentMatches(data.matches, data.players);
+            
+            if(systemPlayers.length === 0) systemPlayers = players;
+            
+            renderMatchForm(); 
+        }
+
+        // --- DYNAMIC FORM ---
+        function renderMatchForm() {
+            const container = document.getElementById('dynamic-form-fields');
+            container.innerHTML = '';
+            const mode = currentConfig.scoringType || '1v1';
+            
+            // 1. STANDARD 1v1
+            if (mode === '1v1') {
+                container.innerHTML = `
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300">Winner</label>
+                        <select id="winner" class="player-select mt-1 block w-full bg-gray-700 border-gray-600 rounded text-white p-2"></select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300">Loser</label>
+                        <select id="loser" class="player-select mt-1 block w-full bg-gray-700 border-gray-600 rounded text-white p-2"></select>
+                    </div>`;
+            }
+            // 2. TEAM (2v2)
+            else if (mode === 'team') {
+                container.innerHTML = `
+                    <div class="bg-gray-800 p-2 rounded border border-green-900 mb-2">
+                        <label class="block text-xs font-bold text-green-400 uppercase mb-1">Winning Team</label>
+                        <select id="win1" class="player-select w-full bg-gray-700 rounded text-white p-1 mb-2 text-sm"></select>
+                        <select id="win2" class="player-select w-full bg-gray-700 rounded text-white p-1 text-sm"></select>
+                    </div>
+                    <div class="bg-gray-800 p-2 rounded border border-red-900">
+                        <label class="block text-xs font-bold text-red-400 uppercase mb-1">Losing Team</label>
+                        <select id="lose1" class="player-select w-full bg-gray-700 rounded text-white p-1 mb-2 text-sm"></select>
+                        <select id="lose2" class="player-select w-full bg-gray-700 rounded text-white p-1 text-sm"></select>
+                    </div>`;
+            }
+            // 3. FFA / RANKED
+            else if (mode.startsWith('ffa')) {
+                container.innerHTML = `
+                    <div id="ffa-list" class="space-y-2"></div>
+                    <button type="button" onclick="addFFARow()" class="mt-2 w-full border border-dashed border-gray-600 text-gray-400 hover:text-white text-xs py-2 rounded">+ Add Participant</button>
+                `;
+                addFFARow(1); addFFARow(2);
+            }
+
+            populateAllSelects();
+            updateStarterVisibility();
+        }
+
+        function populateAllSelects() {
+            systemPlayers.sort((a,b) => a.name.localeCompare(b.name));
+            
+            const allSelects = document.querySelectorAll('.player-select');
+            
+            // 1. Collect all currently selected IDs
+            const selectedIds = Array.from(allSelects)
+                .map(s => s.value)
+                .filter(v => v); // Remove empty strings
+
+            allSelects.forEach(sel => {
+                const currentVal = sel.value;
+                // Save current selection
+                sel.innerHTML = '<option value="">Select Player...</option>';
+                
+                systemPlayers.forEach(p => {
+                    const opt = new Option(p.name, p.id);
+                    
+                    // DISABLE if selected elsewhere AND not the current value of this input
+                    if (selectedIds.includes(p.id) && p.id !== currentVal) {
+                        opt.disabled = true;
+                        // Optional: Add visual cue
+                        // opt.text = `${p.name} (Selected)`; 
+                    }
+                    
+                    sel.add(opt);
+                });
+
+                if(currentVal) sel.value = currentVal;
+                
+                // Remove old listeners to avoid duplicates
+                sel.onchange = null;
+                sel.addEventListener('change', () => {
+                    populateAllSelects(); // Re-run to update disabled states for others
+                    updateStarterOptions();
+                });
+            });
+        }
+
+        function addFFARow(rankOverride) {
+            const list = document.getElementById('ffa-list');
+            const rank = rankOverride || list.children.length + 1;
+            
+            // LOGIC CHANGE: Only Winner vs Loser
+            let labelText = "LOSER";
+            let labelColor = "text-red-400";
+            
+            if (rank === 1) { 
+                labelText = "WINNER"; 
+                labelColor = "text-yellow-400"; 
+            }
+
+            const div = document.createElement('div');
+            div.className = 'flex items-center gap-2';
+            div.innerHTML = `
+                <span class="${labelColor} w-14 text-right font-bold text-xs tracking-wider">${labelText}</span>
+                <select class="player-select w-full bg-gray-700 rounded text-white p-1 text-sm border border-gray-600 focus:border-emerald-500 outline-none"></select>
+                ${rank > 2 ? '<button type="button" onclick="this.parentElement.remove(); populateAllSelects();" class="text-red-500 hover:text-red-300 px-2">×</button>' : ''}
+            `;
+            list.appendChild(div);
+            populateAllSelects();
+        }
+
+        function updateStarterVisibility() {
+            const c = document.getElementById('starter-container');
+            if(currentConfig.trackStarter) {
+                c.classList.remove('hidden');
+                c.querySelector('label').textContent = "Who Started?";
+                updateStarterOptions();
+            } else {
+                c.classList.add('hidden');
+            }
+        }
+
+        function updateStarterOptions() {
+            const s = document.getElementById('starter');
+            const currentVal = s.value;
+            s.innerHTML = '<option value="">Select Starter...</option>';
+            
+            // Collect selected
+            const selectedPlayers = [];
+            document.querySelectorAll('.player-select').forEach(sel => {
+                if (sel.value) {
+                    selectedPlayers.push({ id: sel.value, name: sel.options[sel.selectedIndex].text });
+                }
+            });
+
+            selectedPlayers.forEach(p => s.add(new Option(p.name, p.id)));
+            if (currentVal && [...s.options].some(o => o.value === currentVal)) s.value = currentVal;
+        }
+
+        // --- ACTIONS ---
+        async function createNewBoard() {
+            const name = prompt("Name (e.g. Ping Pong):");
+            if(!name) return;
+            
+            const typeSel = prompt("Type:\n1. 1v1\n2. Team\n3. Winner Takes All\n4. Ranked Race");
+            let scoringType = "1v1";
+            let trackStarterDefault = true;
+            if(typeSel==="2") { scoringType = "team"; trackStarterDefault = true; }
+            else if(typeSel==="3") { scoringType = "ffa_winner"; trackStarterDefault = false; }
+            else if(typeSel==="4") { scoringType = "ffa_ranked"; trackStarterDefault = false; }
+
+            const trackStarter = confirm(`Track who starts/serves? (Recommended: ${trackStarterDefault ? 'Yes' : 'No'})`);
+
+            try {
+                const res = await fetch(`${API_URL}/leaderboard`, {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ name, scoringType, trackStarter })
+                });
+                if(!res.ok) throw new Error("Failed");
+                
+                const newSystem = await res.json();
+                
+                // FIX: Pass the new ID directly to initApp
+                // This ensures the nav rebuilds AND selects the new board immediately
+                await initApp(newSystem.id); 
+                
+            } catch(e) { alert(e.message); }
+	}
+
+        async function addNewPlayer() {
+            if(!currentSystemId) return;
+            const name = prompt("Name:");
+            if(!name) return;
+            await fetch(`${API_URL}/leaderboard/${currentSystemId}/player`, {
+                method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})
+            });
+            loadGameSystem(currentSystemId);
+        }
+
+        // --- SUBMIT HANDLER ---
+        function setupMatchFormListeners() {
+            document.getElementById('record-match-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const mode = currentConfig.scoringType || '1v1';
+                const starterId = document.getElementById('starter').value;
+                let participants = [];
+
+                // 1. GATHER DATA
+                if (mode === '1v1') {
+                    const w = document.getElementById('winner').value;
+                    const l = document.getElementById('loser').value;
+                    if(!w || !l) return alert("Select players");
+                    participants = [{id: w, rank: 1, team: 1}, {id: l, rank: 2, team: 2}];
+                } 
+                else if (mode === 'team') {
+                    const w1 = document.getElementById('win1').value;
+                    const w2 = document.getElementById('win2').value;
+                    const l1 = document.getElementById('lose1').value;
+                    const l2 = document.getElementById('lose2').value;
+                    if(!w1 || !w2 || !l1 || !l2) return alert("Select all 4 players");
+                    participants = [
+                        {id: w1, rank: 1, team: 1}, {id: w2, rank: 1, team: 1},
+                        {id: l1, rank: 2, team: 2}, {id: l2, rank: 2, team: 2}
+                    ];
+                }
+                else if (mode.startsWith('ffa')) {
+                    const selects = document.querySelectorAll('#ffa-list .player-select');
+                    selects.forEach((sel, index) => {
+                        if(sel.value) {
+                            const rank = (mode === 'ffa_winner' && index > 0) ? 2 : (index + 1);
+                            participants.push({ id: sel.value, rank: rank, team: sel.value });
+                        }
+                    });
+                    if (participants.length < 2) return alert("Need at least 2 players");
+                }
+
+                // 2. SUBMIT
+                try {
+                    const res = await fetch(`${API_URL}/match`, {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({ participants, leaderboardId: currentSystemId, source: 'web' })
+                    });
+                    if(!res.ok) throw new Error("Failed");
+                    const data = await res.json();
+
+                    if(starterId && currentConfig.trackStarter) {
+                        await fetch(`${API_URL}/match/starter`, {
+                            method: 'POST', headers: {'Content-Type':'application/json'},
+                            body: JSON.stringify({ matchTimestamp: data.timestamp, starterId, leaderboardId: currentSystemId })
+                        });
+                    }
+                    document.getElementById('match-status').textContent = "Recorded!";
+                    e.target.reset();
+                    renderMatchForm(); // Reset inputs
+                    loadBoardData(currentBoardId);
+                } catch(err) { alert(err.message); }
+            });
+
+        document.getElementById('undo-btn').addEventListener('click', async () => {
+                if(!confirm("Revert the last match?")) return;
+                try {
+                    await fetch(`${API_URL}/undo`, { 
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        // SEND THE ID!
+                        body: JSON.stringify({ leaderboardId: currentSystemId }) 
+                    });
+                    loadBoardData(currentBoardId);
+                } catch (e) {
+                    console.error(e);
+                    alert("Undo Failed: " + e.message);
+                }
+            }
+	);}
+
+        // --- DISPLAY LOGIC ---
+        function displayLeaderboard(players) {
+            const div = document.getElementById('leaderboard');
+            div.innerHTML = '';
+            players.filter(p => (p.wins+p.losses)>0).sort((a,b)=>b.elo-a.elo).forEach((p, i) => {
+                const rate = ((p.wins/(p.wins+p.losses))*100).toFixed(0);
+                const el = document.createElement('div');
+                el.className = 'flex justify-between items-center p-3 bg-gray-700 rounded hover:bg-gray-600 cursor-pointer';
+                el.innerHTML = `
+                    <div class="flex items-center"><span class="text-lg font-bold text-gray-400 w-8">${i+1}</span><span class="font-semibold text-white">${p.name}</span></div>
+                    <div class="text-right"><span class="font-bold text-lg text-emerald-400">${p.elo}</span><span class="text-xs text-gray-400 block">${p.wins}W/${p.losses}L (${rate}%)</span></div>`;
+                el.onclick = () => showPlayerDetails(p);
+                div.appendChild(el);
+            });
+        }
+
+        function showRecentMatches(matches, players) {
+            const div = document.getElementById('recent-matches-list');
+            div.innerHTML = '';
+            matches.forEach(m => {
+                let winners = [], losers = [];
+                if (m.isMulti) {
+                    winners = m.participants.filter(p => p.rank === 1);
+                    losers = m.participants.filter(p => p.rank > 1);
+                } else {
+                    if(m.winnerId) winners.push({name: players[m.winnerId]?.name, eloChange: m.winnerGain});
+                    if(m.loserId) losers.push({name: players[m.loserId]?.name, eloChange: -m.loserLoss});
+                }
+
+                const date = new Date(m.timestamp).toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+                const el = document.createElement('div');
+                el.className = 'p-3 bg-gray-700 rounded border-l-4 border-emerald-500';
+                const wNames = winners.map(w => w.name).join(', ');
+                const lNames = losers.map(l => l.name).join(', ');
+                const wChange = winners[0]?.eloChange || 0;
+                const lChange = losers[0]?.eloChange || 0;
+
+                el.innerHTML = `
+                    <div class="flex justify-between"><span class="font-bold text-green-400 truncate max-w-[50%]">${wNames}</span><span class="text-xs text-gray-500 font-mono">${date}</span></div>
+                    <div class="text-sm text-gray-300">def <span class="font-bold text-red-400 truncate max-w-[50%]">${lNames}</span></div>
+                    <div class="text-xs text-gray-400 mt-1 flex justify-between">
+                        <span>ELO: <span class="text-green-500">+${wChange}</span>/<span class="text-red-500">${lChange}</span></span>
+                        ${m.starterId ? `<span>⚡ ${players[m.starterId]?.name}</span>` : ''}
+                    </div>`;
+                div.appendChild(el);
+            });
+        }
+
+        // ... (Keeping Toggle View, Starter Stats, Player Details, Chart logic same as before) ...
+        let showingStats = false;
+        function toggleLeaderboardView() {
+            showingStats = !showingStats;
+            document.getElementById('leaderboard').classList.toggle('hidden');
+            document.getElementById('starter-stats').classList.toggle('hidden');
+            document.getElementById('lb-toggle-btn').textContent = showingStats ? "Show Standings" : "Show Starter Stats";
+            if(showingStats) loadStarterStats();
+        }
+
+        async function loadStarterStats() {
+            const div = document.getElementById('starter-stats');
+            div.innerHTML = 'Loading...';
+            const res = await fetch(`${API_URL}/stats/starter?boardId=${currentBoardId}`);
+            const d = await res.json();
+            div.innerHTML = '';
+            const summary = document.createElement('div');
+            summary.className = 'mb-3 p-3 bg-gray-900 rounded-lg text-xs text-center text-gray-400 border border-gray-700';
+            summary.innerHTML = `<span class="block uppercase tracking-widest mb-1">First Turn Advantage</span><span class="text-lg font-bold text-purple-400">${d.overallStarterWinPercentage || 0}%</span> <span class="text-gray-500">(${d.totalMatchesWithStarterInfo || 0})</span>`;
+            div.appendChild(summary);
+            d.statsArray.forEach(s => {
+                const el = document.createElement('div');
+                el.className = 'flex justify-between p-2 bg-gray-700 rounded mb-1 text-sm';
+                el.innerHTML = `<span class="font-semibold">${s.name}</span><div class="text-right"><span class="text-purple-400 font-bold">${s.percentage.toFixed(0)}%</span><div class="text-xs text-gray-500">${s.timesStarted}/${s.totalGames}</div></div>`;
+                div.appendChild(el);
+            });
+        }
+
+        async function showPlayerDetails(player) {
+            document.getElementById('recent-matches-container').classList.add('hidden');
+            document.getElementById('player-details').classList.remove('hidden');
+            document.getElementById('details-title').textContent = player.name;
+            document.getElementById('extended-stats').innerHTML = 'Loading...';
+            try {
+                const res = await fetch(`${API_URL}/leaderboard/${currentBoardId}/player/${player.id}`);
+                const data = await res.json();
+                renderChart(data.history, data.currentElo);
+                const s = data.stats;
+                const grid = document.getElementById('extended-stats');
+                const card = (l, v, c, sub) => `<div class="bg-gray-700 p-3 rounded-lg text-center"><div class="text-xs text-gray-400">${l}</div><div class="text-xl font-bold ${c||'text-white'}">${v}</div>${sub?`<div class="text-xs text-gray-500">${sub}</div>`:''}</div>`;
+                const sC = parseInt(s.starterWinRate)>=50?'text-purple-400':'text-gray-400';
+                grid.innerHTML = [card('Peak', s.peakElo,'text-emerald-400'), card('Low', s.lowestElo,'text-red-400'), card('Streak', s.currentStreak, s.currentStreak.includes('W')?'text-green-400':'text-red-400'), card('Win %', s.winRate+'%','text-blue-400'), card('Starter %', s.starterWinRate, sC, `${s.startsCount} starts`), card('Best', s.favorite,'text-yellow-400'), card('Nemesis', s.nemesis,'text-orange-400')].join('');
+                
+                const hDiv = document.getElementById('match-history'); hDiv.innerHTML='';
+                [...data.history].reverse().slice(0,10).forEach(m=>{
+                    const w=m.result==='win';
+                    const el=document.createElement('div'); el.className='flex justify-between items-center p-2 bg-gray-700 rounded text-sm mb-1';
+                    el.innerHTML = `<div class="flex items-center overflow-hidden mr-2"><span class="${w?'text-green-400 font-bold':'text-red-400 font-bold'} w-10 shrink-0">${w?'WON':'LOST'}</span><span class="text-gray-500 mx-2 text-xs">vs</span><span class="text-white font-medium truncate">${m.opponentName||'Unknown'}</span></div><div class="flex items-center gap-3 shrink-0"><span class="text-gray-500 text-xs hidden sm:inline">${new Date(m.timestamp).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span><span class="${w?'text-green-400':'text-red-400'} font-mono w-8 text-right">${w?'+':''}${m.eloChange}</span></div>`;
+                    hDiv.appendChild(el);
+                });
+            } catch(e){}
+        }
+
+        function renderChart(history, current) {
+            if(chartInstance) chartInstance.destroy();
+            const ctx = document.getElementById('elo-chart').getContext('2d');
+            let elo = current;
+            const points = [elo];
+            for(let i=history.length-1; i>=0; i--) { elo -= history[i].eloChange; points.unshift(elo); }
+            chartInstance = new Chart(ctx, { type: 'line', data: { labels: points.map(()=>''), datasets:[{label:'ELO', data:points, borderColor:'#10B981', backgroundColor:'rgba(16, 185, 129, 0.1)', fill: true, tension:0.3, pointRadius:0, pointHoverRadius:4 }] }, options:{responsive:true, maintainAspectRatio:false, interaction: { intersect: false, mode: 'index' }, scales:{ x:{display:false}, y:{ grid:{color:'#374151'}, ticks:{color:'#9CA3AF'} } }, plugins:{ legend:{display:false} } } });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setupMatchFormListeners();
+            initApp();
+        });
+    </script>
+</body>
+</html>

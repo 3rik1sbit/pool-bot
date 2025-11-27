@@ -1,2 +1,30 @@
 node_modules
 .env
+
+/generated/prisma
+
+# --- Dependencies ---
+node_modules/
+
+# --- Database & Backups ---
+*.db
+*.db-journal
+*.sqlite
+*.bak
+prisma/*.db
+prisma/dev.db.backup*
+poolDB.bak/
+
+# --- Logs & generated files ---
+*.log
+*.csv
+*.png
+npm-debug.log
+
+# --- IDE Settings (VS Code / Webstorm) ---
+.idea/
+.vscode/
+*.swp
+
+# --- Environment Variables (CRITICAL) ---
+.env

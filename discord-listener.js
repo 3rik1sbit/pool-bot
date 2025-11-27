@@ -136,18 +136,40 @@ async function handleUndo(message) {
 
 
 async function handleRankings(message, allTime = false) {
-    const endpoint = allTime ? '/rankings/alltime' : '/rankings/seasonal';
-    const title = allTime ? 'Office Pool Rankings (All-Time)' : 'Office Pool Rankings (Current Season)';
-    const color = allTime ? '#DAA520' : '#0099FF';
-
     try {
-        const response = await axios.get(`${LOGIC_SERVICE_URL}${endpoint}`);
-        const { rankedPlayers, seasonName } = response.data;
-        
-        const finalTitle = seasonName ? `Office Pool Rankings (Season: ${seasonName})` : title;
+        // 1. Fetch the list of all available boards
+        const boardsResponse = await axios.get(`${LOGIC_SERVICE_URL}/leaderboards`);
+        const boards = boardsResponse.data;
+
+        // 2. Determine which board to show
+        let targetBoard;
+        if (allTime) {
+            targetBoard = boards.find(b => b.isLegacy);
+        } else {
+            // The API sorts by: Legacy First, then Newest Seasons.
+            // So the first board that ISN'T legacy is the current season.
+            targetBoard = boards.find(b => !b.isLegacy);
+        }
+
+        if (!targetBoard) {
+            return message.reply(allTime ? "No all-time leaderboard found." : "No active season found.");
+        }
+
+        // 3. Fetch the data for that specific board
+        const dataResponse = await axios.get(`${LOGIC_SERVICE_URL}/leaderboard/${targetBoard.id}`);
+        const { players } = dataResponse.data; // This returns a Map (Object), not an array
+
+        // 4. Convert Object to Array, Filter, and Sort
+        const rankedPlayers = Object.values(players)
+            .filter(p => (p.wins + p.losses) > 0)
+            .sort((a, b) => b.elo - a.elo);
+
+        // 5. Build the Embed
+        const title = `Office Pool Rankings (${targetBoard.name})`;
+        const color = allTime ? '#DAA520' : '#0099FF';
 
         const embed = new EmbedBuilder()
-            .setTitle(finalTitle)
+            .setTitle(title)
             .setColor(color)
             .setFooter({ text: 'Office Pool ELO System' });
         
@@ -155,11 +177,17 @@ async function handleRankings(message, allTime = false) {
             embed.setDescription('No players have played any games yet.');
         } else {
             rankedPlayers.slice(0, 10).forEach((player, index) => {
-                embed.addFields({ name: `#${index + 1} ${player.name}`, value: `ELO: ${player.elo} | W: ${player.wins} | L: ${player.losses}`, inline: false });
+                embed.addFields({ 
+                    name: `#${index + 1} ${player.name}`, 
+                    value: `ELO: ${player.elo} | W: ${player.wins} | L: ${player.losses}`, 
+                    inline: false 
+                });
             });
         }
         message.reply({ embeds: [embed] });
+
     } catch (error) {
+        console.error(error);
         message.reply(`Failed to get rankings: ${formatError(error)}`);
     }
 }
@@ -214,20 +242,41 @@ async function handleMyStats(message) {
 }
 
 async function handleBreakerStats(message) {
-     try {
-        const response = await axios.get(`${LOGIC_SERVICE_URL}/stats/breaker`);
+    const args = message.content.split(/ +/);
+    const isSeasonal = args.includes('season'); // Check if user typed "!pool breakerstats season"
+
+    try {
+        let url = `${LOGIC_SERVICE_URL}/stats/breaker`;
+        let titleType = "All-Time";
+
+        if (isSeasonal) {
+            // 1. Fetch list to find current season ID
+            const boardsRes = await axios.get(`${LOGIC_SERVICE_URL}/leaderboards`);
+            const boards = boardsRes.data;
+            // Find newest non-legacy board
+            const seasonBoard = boards.find(b => !b.isLegacy && b.name.startsWith("Pool 20"));
+            
+            if (seasonBoard) {
+                url += `?boardId=${seasonBoard.id}`;
+                titleType = seasonBoard.name;
+            } else {
+                return message.reply("No active season found.");
+            }
+        }
+
+        const response = await axios.get(url);
         const { totalMatchesWithBreakerInfo, breakerWins, overallBreakerWinPercentage, playerBreakStatsText } = response.data;
 
         const embed = new EmbedBuilder()
-            .setTitle(`Breaker Statistics (All-Time)`)
+            .setTitle(`Breaker Statistics (${titleType})`)
             .setColor('#8A2BE2')
             .addFields(
                 { name: 'Matches Analyzed', value: `${totalMatchesWithBreakerInfo}`, inline: false },
                 { name: 'Overall Times Breaker Won', value: `${breakerWins}`, inline: false },
                 { name: 'Overall Breaker Win %', value: `${overallBreakerWinPercentage}%`, inline: false },
-                { name: 'Player Break Frequencies', value: playerBreakStatsText, inline: false }
+                { name: 'Player Break Frequencies', value: playerBreakStatsText || "No stats available.", inline: false }
             )
-            .setFooter({ text: 'Office Pool ELO System - All-Time Stats' });
+            .setFooter({ text: 'Office Pool ELO System' });
         message.reply({ embeds: [embed] });
     } catch (error) {
         message.reply(`Failed to get breaker stats: ${formatError(error)}`);
@@ -355,18 +404,22 @@ app.use(express.json());
 
 app.post('/notify/match-recorded', async (req, res) => {
     try {
-        if (!NOTIFICATION_CHANNEL_ID) {
-            console.log("NOTIFICATION_CHANNEL_ID not set, skipping Discord notification.");
+        const { seasonalResult, allTimeResult, targetChannelId } = req.body;
+
+        // Use the specific channel ID if provided, otherwise fallback to the .env default
+        const channelToUse = targetChannelId || NOTIFICATION_CHANNEL_ID;
+
+        if (!channelToUse) {
+            console.log("No channel ID configured for this notification.");
             return res.status(200).send({ message: "Notification skipped." });
         }
         
-        const channel = await client.channels.fetch(NOTIFICATION_CHANNEL_ID);
+        const channel = await client.channels.fetch(channelToUse);
         if (!channel) {
-            console.error(`Notification channel with ID ${NOTIFICATION_CHANNEL_ID} not found.`);
+            console.error(`Notification channel with ID ${channelToUse} not found.`);
             return res.status(404).send({ error: "Notification channel not found." });
         }
 
-        const { seasonalResult, allTimeResult } = req.body;
         const embed = new EmbedBuilder()
             .setTitle('Match Result Recorded (from Web)')
             .setColor('#1E90FF') // Blue color for web entries

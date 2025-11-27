@@ -1,0 +1,92 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Leaderboard {
+  id        String   @id @default(uuid())
+  name      String
+  gameType  String   // e.g. "game_123" (links seasons together)
+  
+  // "1v1", "team_2v2", "ffa_winner", "ffa_ranked"
+  scoringType String @default("1v1") 
+
+  trackStarter Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  discordChannelId String? @unique 
+
+  players   Player[]
+  matches   Match[]
+}
+
+model Player {
+  id            String   @id @default(uuid())
+  leaderboardId String
+  
+  name          String
+  discordUserId String?
+  
+  elo           Int      @default(1000)
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  
+  leaderboard   Leaderboard @relation(fields: [leaderboardId], references: [id])
+  
+  // Existing relations for 1v1
+  wonMatches    Match[]     @relation("Winner")
+  lostMatches   Match[]     @relation("Loser")
+
+  participations MatchParticipant[] 
+
+  @@unique([leaderboardId, discordUserId])
+}
+
+model Match {
+  id            String   @id @default(uuid())
+  leaderboardId String
+  timestamp     DateTime @default(now())
+  
+  // Legacy/Simple fields (We keep these for 1v1 backward compatibility)
+  winnerId      String?  // Made optional for FFA games
+  loserId       String?  // Made optional
+  winnerElo     Int?     // Made optional
+  loserElo      Int?     // Made optional
+  eloChange     Int      @default(0)
+
+  // RENAMED: Was breakerId
+  starterId     String?
+
+  // New Relation for Multi-Player games
+  participants  MatchParticipant[] 
+
+  leaderboard   Leaderboard @relation(fields: [leaderboardId], references: [id])
+  winner        Player?     @relation("Winner", fields: [winnerId], references: [id])
+  loser         Player?     @relation("Loser", fields: [loserId], references: [id])
+}
+
+// NEW TABLE: Tracks who played in a match and their result
+model MatchParticipant {
+  id        String @id @default(uuid())
+  matchId   String
+  playerId  String
+  
+  // For Team Games: 0 = Team A (Winners), 1 = Team B (Losers)
+  // For FFA Games: 1 = 1st Place, 2 = 2nd Place, etc.
+  rank      Int    
+  
+  // Snapshot of ELO *before* the match (crucial for multi-calc)
+  startElo  Int    
+  // How much this specific person changed
+  eloChange Int    
+
+  match     Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player    Player @relation(fields: [playerId], references: [id])
+}
+
