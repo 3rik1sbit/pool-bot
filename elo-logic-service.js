@@ -401,23 +401,32 @@ app.post('/match/starter', async (req, res) => {
 // 8. Undo
 app.post('/undo', async (req, res) => {
     const { leaderboardId } = req.body;
+
     try {
+        // 1. Resolve the System (All-Time Board)
         let systemId = leaderboardId;
         if (!systemId) {
             const legacy = await prisma.leaderboard.findFirst({ where: { name: ALL_TIME_BOARD_NAME } });
+            if (!legacy) return res.status(404).json({ error: "Legacy board not found. Database issue." });
             systemId = legacy.id;
         }
-        const { allTimeBoard, seasonBoard } = await getSystemContext(systemId);
 
-        const undoLastMatch = async (boardId) => {
-            const lastMatch = await prisma.match.findFirst({
-                where: { leaderboardId: boardId }, orderBy: { timestamp: 'desc' },
-                include: { participants: true, winner: true, loser: true }
-            });
-            if (!lastMatch) return null;
+        // 2. Find the VERY LAST match recorded in the System (All-Time)
+        const lastMatchAllTime = await prisma.match.findFirst({
+            where: { leaderboardId: systemId },
+            orderBy: { timestamp: 'desc' },
+            include: { participants: true, winner: true, loser: true, leaderboard: true }
+        });
 
-            if (lastMatch.participants.length > 0) {
-                for (const p of lastMatch.participants) {
+        if (!lastMatchAllTime) return res.status(400).json({ error: "No matches found to undo." });
+
+        // 3. Helper to revert stats for a single match row
+        const revertMatchStats = async (matchRow) => {
+            if (!matchRow) return;
+
+            if (matchRow.participants.length > 0) {
+                // Multi-player logic
+                for (const p of matchRow.participants) {
                     const isWin = p.rank === 1;
                     await prisma.player.update({
                         where: { id: p.playerId },
@@ -429,22 +438,64 @@ app.post('/undo', async (req, res) => {
                     });
                 }
             } else {
-                const amount = lastMatch.eloChange || 0;
-                await prisma.player.update({ where: { id: lastMatch.winnerId }, data: { elo: { decrement: amount }, wins: { decrement: 1 } } });
-                await prisma.player.update({ where: { id: lastMatch.loserId }, data: { elo: { increment: amount }, losses: { decrement: 1 } } });
+                // Legacy 1v1 logic
+                const amount = matchRow.eloChange || 0;
+                // Check if winnerId/loserId exist before updating
+                if (matchRow.winnerId) await prisma.player.update({ where: { id: matchRow.winnerId }, data: { elo: { decrement: amount }, wins: { decrement: 1 } } });
+                if (matchRow.loserId) await prisma.player.update({ where: { id: matchRow.loserId }, data: { elo: { increment: amount }, losses: { decrement: 1 } } });
             }
-            await prisma.match.delete({ where: { id: lastMatch.id } });
-            return { winnerName: "Reverted", loserName: "Game" };
+            // Delete the match record
+            await prisma.match.delete({ where: { id: matchRow.id } });
         };
 
-        const sMatch = await undoLastMatch(seasonBoard.id);
-        await undoLastMatch(allTimeBoard.id);
+        // 4. Find the corresponding Seasonal Match
+        // We calculate the Season Name based on the timestamp of the MATCH
+        const date = new Date(lastMatchAllTime.timestamp);
 
-        if (!sMatch) return res.status(400).json({ error: "No matches." });
-        res.json({ seasonal: { winnerName: "Reverted", loserName: "Match", eloGain: 0 }, allTime: {} });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+        // Clean name logic matches getSystemContext
+        let baseName = lastMatchAllTime.leaderboard.name.replace(" (Legacy)", "").replace(" (All-Time)", "");
+        if (baseName === "Office Pool") baseName = "Pool";
+
+        const matchSeasonName = `${baseName} ${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+
+        const seasonBoard = await prisma.leaderboard.findFirst({
+            where: {
+                name: matchSeasonName,
+                gameType: lastMatchAllTime.leaderboard.gameType
+            }
+        });
+
+        if (seasonBoard) {
+            // Find the sibling match in that season (Same timestamp within 2 seconds)
+            const targetTime = new Date(lastMatchAllTime.timestamp).getTime();
+            const windowStart = new Date(targetTime - 2000);
+            const windowEnd = new Date(targetTime + 2000);
+
+            const seasonalMatch = await prisma.match.findFirst({
+                where: {
+                    leaderboardId: seasonBoard.id,
+                    timestamp: { gte: windowStart, lte: windowEnd }
+                },
+                include: { participants: true }
+            });
+
+            // Revert the seasonal stats
+            if (seasonalMatch) await revertMatchStats(seasonalMatch);
+        }
+
+        // 5. Revert the All-Time stats
+        await revertMatchStats(lastMatchAllTime);
+
+        res.json({
+            seasonal: { winnerName: "Reverted", loserName: "Match", eloGain: 0 },
+            allTime: {}
+        });
+
+    } catch (e) {
+        console.error("Undo Error:", e);
+        res.status(500).json({ error: e.message });
+    }
 });
-
 // 9. Generate Tournament Bracket
 app.post('/tournament', async (req, res) => {
     const { playerIds, leaderboardId } = req.body; // playerIds: Array of DiscordIDs
