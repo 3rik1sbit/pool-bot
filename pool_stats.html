@@ -628,7 +628,7 @@
                 const grid = document.getElementById('extended-stats');
                 const card = (l, v, c, sub) => `<div class="bg-gray-700 p-3 rounded-lg text-center"><div class="text-xs text-gray-400">${l}</div><div class="text-xl font-bold ${c||'text-white'}">${v}</div>${sub?`<div class="text-xs text-gray-500">${sub}</div>`:''}</div>`;
                 const sC = parseInt(s.starterWinRate)>=50?'text-purple-400':'text-gray-400';
-                grid.innerHTML = [card('Peak', s.peakElo,'text-emerald-400'), card('Low', s.lowestElo,'text-red-400'), card('Streak', s.currentStreak, s.currentStreak.includes('W')?'text-green-400':'text-red-400'), card('Win %', s.winRate+'%','text-blue-400'), card('Starter %', s.starterWinRate, sC, `${s.startsCount} starts`), card('Best', s.favorite,'text-yellow-400'), card('Nemesis', s.nemesis,'text-orange-400')].join('');
+                grid.innerHTML = [card('Peak', s.peakElo,'text-emerald-400'), card('Low', s.lowestElo,'text-red-400'), card('Streak', s.currentStreak, s.currentStreak.includes('W')?'text-green-400':'text-red-400'), card('Win %', s.winRate+'%','text-blue-400'), card('Starter win rate %', s.starterWinRate, sC, `${s.startsCount} starts`), card('Best', s.favorite,'text-yellow-400'), card('Nemesis', s.nemesis,'text-orange-400')].join('');
 
                 const hDiv = document.getElementById('match-history'); hDiv.innerHTML='';
                 [...data.history].reverse().slice(0,10).forEach(m=>{
